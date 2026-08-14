@@ -433,7 +433,10 @@ def _run_gateway(
         runtime_events=runtime_events,
         turn_delivery_factory=turn_delivery_factory,
         provider_signature=provider_snapshot.signature,
-        hooks=[TokenUsageHook(timezone_name=config.agents.defaults.timezone)],
+        hooks=[TokenUsageHook(
+            timezone_name=config.agents.defaults.timezone,
+            cost_rates=config.telemetry.cost_rates,
+        )],
         local_trigger_store=trigger_store,
         hook_factories=[create_file_edit_activity_hook],
         tool_registry=tools,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import time
 from collections.abc import Awaitable, Callable, Iterable
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -85,6 +86,21 @@ def _restore_outer_whitespace(content: str, original: str | None) -> str:
     leading = original[:leading_size]
     trailing = original[-trailing_size:] if trailing_size else ""
     return f"{leading}{content}{trailing}"
+
+
+def _provider_slug(provider: Any) -> str:
+    """Return a stable lowercase slug for cost-table matching.
+
+    Providers do not carry a registry name on the runtime, so derive one from
+    the class name (``AnthropicProvider`` -> ``anthropic``). Falls back to
+    ``unknown``. Cost matching also falls back to the model and ``*`` keys, so
+    this only needs to be *stable*, not the registry's canonical name.
+    """
+    name = type(provider).__name__
+    if name.endswith("Provider"):
+        name = name[: -len("Provider")]
+    slug = name.lower()
+    return slug if slug else "unknown"
 
 
 @dataclass(slots=True)
@@ -1027,6 +1043,9 @@ class AgentRunner:
             if is_streaming_request and timeout_s is not None
             else timeout_s
         )
+        context.provider = _provider_slug(spec.runtime.provider)
+        context.model = spec.runtime.model
+        _request_started = time.monotonic()
         try:
             response = (
                 await coro if outer_timeout_s is None
@@ -1047,6 +1066,7 @@ class AgentRunner:
                 )
         # chat_stream_with_retry may recover internally, so only fail unfinished
         # hosted calls after the provider returns its final error response.
+        context.latency_ms = int((time.monotonic() - _request_started) * 1000)
         if response.finish_reason == "error":
             for event in list(active_hosted_tools.values()):
                 await _provider_tool_event({

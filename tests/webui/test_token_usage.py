@@ -103,6 +103,10 @@ def test_record_token_usage_aggregates_by_local_day(tmp_path, monkeypatch) -> No
             "requests": 2,
             "provider_requests": 2,
             "estimated_requests": 0,
+            "cost_usd": 0.0,
+            "latency_ms": 0,
+            "ok_requests": 0,
+            "error_requests": 0,
             "sources": {
                 "user": {
                     "prompt_tokens": 110,
@@ -114,6 +118,10 @@ def test_record_token_usage_aggregates_by_local_day(tmp_path, monkeypatch) -> No
                     "requests": 2,
                     "provider_requests": 2,
                     "estimated_requests": 0,
+                    "cost_usd": 0.0,
+                    "latency_ms": 0,
+                    "ok_requests": 0,
+                    "error_requests": 0,
                 }
             },
         }
@@ -201,3 +209,83 @@ async def test_token_usage_hook_classifies_source_from_session_key(tmp_path, mon
     payload = token_usage_payload(now=datetime(2026, 6, 3, tzinfo=timezone.utc))
 
     assert payload["days"][0]["sources"]["cron"]["total_tokens"] == 15
+
+
+def test_record_token_usage_accumulates_cost_latency_and_ok(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("nanobot.webui.token_usage.get_webui_dir", lambda: tmp_path / "webui")
+
+    record_token_usage(
+        {"prompt_tokens": 100, "completion_tokens": 50},
+        source="user",
+        latency_ms=150,
+        cost_usd=0.0002,
+        ok=True,
+        now=datetime(2026, 6, 3, tzinfo=timezone.utc),
+    )
+    record_token_usage(
+        {"prompt_tokens": 10, "completion_tokens": 5},
+        source="user",
+        latency_ms=300,
+        ok=False,
+        now=datetime(2026, 6, 3, tzinfo=timezone.utc),
+    )
+
+    payload = token_usage_payload(now=datetime(2026, 6, 3, tzinfo=timezone.utc))
+    row = payload["days"][0]
+    assert row["latency_ms"] == 450
+    assert row["ok_requests"] == 1
+    assert row["error_requests"] == 1
+    assert row["cost_usd"] == pytest.approx(0.0002)
+    assert payload["cost_usd_30d"] == pytest.approx(0.0002)
+    assert payload["error_requests_30d"] == 1
+    assert payload["avg_latency_ms_30d"] == 225
+    src = row["sources"]["user"]
+    assert src["latency_ms"] == 450
+    assert src["error_requests"] == 1
+
+
+def test_estimate_cost_usd_matches_provider_model_then_provider_then_star(tmp_path, monkeypatch) -> None:
+    from nanobot.webui.token_usage import estimate_cost_usd
+
+    rates = {
+        "openrouter/deepseek/deepseek-chat": {"input": 0.5, "output": 1.0},
+        "openrouter": {"input": 0.1, "output": 0.2},
+        "*": {"input": 1.0, "output": 2.0},
+    }
+    usage = {"prompt_tokens": 1_000_000, "completion_tokens": 500_000}
+    assert estimate_cost_usd("openrouter", "deepseek/deepseek-chat", usage, rates) == pytest.approx(1.0)
+    assert estimate_cost_usd("openrouter", "some-other-model", usage, rates) == pytest.approx(0.2)
+    assert estimate_cost_usd("unknown", "x", usage, rates) == pytest.approx(2.0)
+    assert estimate_cost_usd("unknown", "x", usage, None) == 0.0
+    assert estimate_cost_usd("unknown", "x", usage, {}) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_token_usage_hook_records_cost_and_latency(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("nanobot.webui.token_usage.get_webui_dir", lambda: tmp_path / "webui")
+    monkeypatch.setattr("nanobot.webui.token_usage._local_day", lambda *_, **__: "2026-06-03")
+
+    hook = TokenUsageHook(
+        cost_rates={
+            "openrouter/deepseek/deepseek-chat": {"input": 1.0, "output": 2.0},
+        }
+    )
+    await hook.after_iteration(
+        AgentHookContext(
+            iteration=0,
+            messages=[],
+            session_key="api:default",
+            provider="openrouter",
+            model="deepseek/deepseek-chat",
+            latency_ms=250,
+            usage={"prompt_tokens": 1_000_000, "completion_tokens": 500_000},
+            stop_reason="end_turn",
+            error=None,
+        )
+    )
+
+    payload = token_usage_payload(now=datetime(2026, 6, 3, tzinfo=timezone.utc))
+    row = payload["days"][0]
+    assert row["cost_usd"] == pytest.approx(2.0)
+    assert row["latency_ms"] == 250
+    assert row["ok_requests"] == 1

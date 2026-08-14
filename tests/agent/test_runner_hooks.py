@@ -612,3 +612,42 @@ async def test_runner_preserves_cancellation_when_finally_hook_fails():
             max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
             hook=BadFinallyHook(),
         ))
+
+
+@pytest.mark.asyncio
+async def test_runner_populates_provider_model_and_latency_on_hook_context():
+    from nanobot.agent.hook import AgentHook, AgentHookContext
+    from nanobot.agent.runner import AgentRunner
+
+    provider = MagicMock(spec=LLMProvider)
+    seen: dict[str, object] = {}
+
+    async def chat_with_retry(**kwargs):
+        return LLMResponse(content="done", tool_calls=[], usage={"prompt_tokens": 10, "completion_tokens": 5})
+
+    provider.chat_with_retry = chat_with_retry
+    provider.generation = MagicMock(temperature=0.7, max_tokens=100)
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+
+    class CaptureHook(AgentHook):
+        async def after_iteration(self, context: AgentHookContext) -> None:
+            seen["provider"] = context.provider
+            seen["model"] = context.model
+            seen["latency_ms"] = context.latency_ms
+
+    runner = AgentRunner()
+    await runner.run(make_run_spec(provider,
+        initial_messages=[{"role": "user", "content": "hi"}],
+        tools=tools,
+        model="claude-test",
+        max_iterations=1,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        hook=CaptureHook(),
+    ))
+
+    assert isinstance(seen["provider"], str)
+    assert seen["provider"]
+    assert seen["model"] == "claude-test"
+    assert isinstance(seen["latency_ms"], int)
+    assert seen["latency_ms"] >= 0

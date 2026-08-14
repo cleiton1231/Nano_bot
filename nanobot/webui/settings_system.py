@@ -122,6 +122,7 @@ def system_settings_payload(
             "unified_session": defaults.unified_session,
         },
         "usage": token_usage_payload(timezone_name=defaults.timezone),
+        "search_usage": _search_usage_payload(),
         "advanced": {
             "restrict_to_workspace": config.tools.restrict_to_workspace,
             "workspace_sandbox": sandbox_status.as_dict(),
@@ -140,6 +141,12 @@ def system_settings_payload(
 def settings_usage_payload(config: Config) -> dict[str, Any]:
     """Return the lightweight token usage slice for Overview refreshes."""
     return token_usage_payload(timezone_name=config.agents.defaults.timezone)
+
+
+def _search_usage_payload() -> dict[str, Any]:
+    from nanobot.utils.searchusage import search_usage_payload as _payload
+
+    return _payload()
 
 
 def update_agent_system_settings(config: Config, query: QueryParams) -> tuple[bool, bool]:

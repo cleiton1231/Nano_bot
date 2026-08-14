@@ -386,6 +386,25 @@ class SecurityConfig(Base):
     audit_log: bool = True
 
 
+class CostRateConfig(Base):
+    """Per-1M-token price for one provider/model key (USD)."""
+
+    input: float = Field(default=0.0, ge=0.0)
+    output: float = Field(default=0.0, ge=0.0)
+
+
+class TelemetryConfig(Base):
+    """Local cost/latency telemetry configuration.
+
+    ``cost_rates`` maps a key to per-1M-token prices. A key is matched by
+    ``"provider/model"`` first, then ``"provider"``, then ``"*"``. All prices
+    default to 0 until configured, so cost estimation stays off-by-default.
+    """
+
+    cost_rates: dict[str, CostRateConfig] = Field(default_factory=dict)
+    record_search_usage: bool = True
+
+
 class MCPServerConfig(Base):
     """MCP server connection configuration (stdio or HTTP)."""
 
@@ -457,6 +476,7 @@ class Config(BaseSettings):
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     model_presets: dict[str, ModelPresetConfig] = Field(
         default_factory=dict,

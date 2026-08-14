@@ -78,6 +78,7 @@ def load_config(config_path: Path | None = None) -> Config:
         config.bind_source_path(path)
         _apply_ssrf_whitelist(config)
         _apply_security_config(config)
+        _apply_telemetry_config(config)
         return config
 
     try:
@@ -135,6 +136,7 @@ def load_config(config_path: Path | None = None) -> Config:
     config.bind_source_path(path)
     _apply_ssrf_whitelist(config)
     _apply_security_config(config)
+    _apply_telemetry_config(config)
     return config
 
 
@@ -150,6 +152,13 @@ def _apply_security_config(config: Config) -> None:
     from nanobot.security.audit import set_audit_enabled
 
     set_audit_enabled(config.security.audit_log)
+
+
+def _apply_telemetry_config(config: Config) -> None:
+    """Apply the telemetry toggles (e.g. local search call recording)."""
+    from nanobot.utils.searchusage import set_search_usage_enabled
+
+    set_search_usage_enabled(config.telemetry.record_search_usage)
 
 
 def save_config(config: Config, config_path: Path | None = None) -> None:

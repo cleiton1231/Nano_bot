@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
+import threading
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, cast
 
 
@@ -175,5 +179,152 @@ def _optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+# ---------------------------------------------------------------------------
+# Local search telemetry
+#
+# Providers without a usage API (or for quick local insight) still record
+# per-call latency and ok/error counts locally, persisted per day.
+# ---------------------------------------------------------------------------
+
+_SEARCH_USAGE_SCHEMA_VERSION = 1
+_MAX_SEARCH_DAYS_RETAINED = 400
+_SEARCH_WRITE_LOCK = threading.Lock()
+_search_enabled = True
+
+
+def set_search_usage_enabled(enabled: bool) -> None:
+    """Globally enable/disable local search call telemetry."""
+    global _search_enabled
+    _search_enabled = bool(enabled)
+
+
+def search_usage_state_path() -> Path:
+    """Return the local search-usage state file path (without creating it)."""
+    from nanobot.config.paths import get_webui_dir
+
+    return get_webui_dir() / "search-usage.json"
+
+
+def _empty_search_state() -> dict[str, Any]:
+    return {"schema_version": _SEARCH_USAGE_SCHEMA_VERSION, "days": {}}
+
+
+def _sint(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _search_day(now: datetime | None = None) -> str:
+    dt = now or datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).date().isoformat()
+
+
+def _read_search_state() -> dict[str, Any]:
+    path = search_usage_state_path()
+    if not path.is_file():
+        return _empty_search_state()
+    try:
+        with path.open(encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return _empty_search_state()
+    if not isinstance(raw, dict) or not isinstance(raw.get("days"), dict):
+        return _empty_search_state()
+    return raw
+
+
+def _write_search_state(state: dict[str, Any]) -> None:
+    path = search_usage_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, sort_keys=True, indent=2)
+        f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def record_local_search_call(
+    provider: str,
+    *,
+    latency_ms: int | None = None,
+    ok: bool = True,
+) -> None:
+    """Record one local search call for *provider* (call count + latency)."""
+    if not _search_enabled:
+        return
+    name = (provider or "unknown").strip().lower() or "unknown"
+    latency = max(0, latency_ms) if latency_ms is not None else 0
+    with _SEARCH_WRITE_LOCK:
+        state = _read_search_state()
+        days = cast(dict[str, Any], state["days"])
+        day = _search_day()
+        provider_row = cast(dict[str, Any], days.get(day, {}))
+        row = cast(dict[str, Any], provider_row.get(name, {"calls": 0, "errors": 0, "latency_ms": 0}))
+        row["calls"] = _sint(row.get("calls")) + 1
+        row["latency_ms"] = _sint(row.get("latency_ms")) + latency
+        if not ok:
+            row["errors"] = _sint(row.get("errors")) + 1
+        provider_row[name] = row
+        days[day] = provider_row
+        if len(days) > _MAX_SEARCH_DAYS_RETAINED:
+            state["days"] = dict(sorted(days.items())[-_MAX_SEARCH_DAYS_RETAINED:])
+        _write_search_state(state)
+
+
+def search_usage_payload(
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Return aggregated local search telemetry for overview surfaces."""
+    state = _read_search_state()
+    days = cast(dict[str, Any], state["days"])
+    today = _search_day(now)
+    try:
+        start = (datetime.fromisoformat(today).date() - timedelta(days=29)).isoformat()
+    except ValueError:
+        start = today
+    providers_all: dict[str, dict[str, int]] = {}
+    providers_30d: dict[str, dict[str, int]] = {}
+    for date, provider_row in days.items():
+        if not isinstance(provider_row, dict):
+            continue
+        in_window = start <= date <= today
+        for name, row in provider_row.items():
+            if not isinstance(row, dict):
+                continue
+            calls = _sint(row.get("calls"))
+            errors = _sint(row.get("errors"))
+            latency = _sint(row.get("latency_ms"))
+            for bucket in (
+                providers_all,
+                providers_30d if in_window else None,
+            ):
+                if bucket is None:
+                    continue
+                acc = bucket.setdefault(name, {"calls": 0, "errors": 0, "latency_ms": 0})
+                acc["calls"] += calls
+                acc["errors"] += errors
+                acc["latency_ms"] += latency
+    return {
+        "providers": {
+            name: {
+                "calls": row["calls"],
+                "errors": row["errors"],
+                "avg_latency_ms": round(row["latency_ms"] / row["calls"], 1) if row["calls"] else 0,
+            }
+            for name, row in sorted(providers_30d.items())
+        },
+        "calls_30d": sum(row["calls"] for row in providers_30d.values()),
+        "errors_30d": sum(row["errors"] for row in providers_30d.values()),
+        "calls_total": sum(row["calls"] for row in providers_all.values()),
+    }
 
 

@@ -30,6 +30,9 @@ class AgentHookContext:
     stop_reason: str | None = None
     error: str | None = None
     session_key: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    latency_ms: int | None = None
 
 
 @dataclass(slots=True)

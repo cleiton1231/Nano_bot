@@ -29,6 +29,9 @@ _USAGE_KEYS = (
 )
 _REQUEST_KEYS = ("requests", "provider_requests", "estimated_requests")
 _SOURCE_KEYS = ("user", "api", "cron", "dream", "system")
+_COST_KEYS = ("cost_usd",)
+_LATENCY_KEYS = ("latency_ms",)
+_COUNT_KEYS = ("ok_requests", "error_requests")
 _WRITE_LOCK = threading.Lock()
 
 
@@ -71,6 +74,13 @@ def _clean_int(value: Any) -> int:
         return 0
 
 
+def _clean_float(value: Any) -> float:
+    try:
+        return max(0.0, float(value or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _clean_source(value: str | None) -> str:
     return value if value in _SOURCE_KEYS else "system"
 
@@ -104,7 +114,7 @@ def _normalize_usage(raw: dict[str, Any] | None) -> dict[str, int]:
     return usage if usage["total_tokens"] > 0 else {}
 
 
-def _normalize_usage_row(row: dict[str, Any]) -> dict[str, int]:
+def _normalize_usage_row(row: dict[str, Any]) -> dict[str, int | float]:
     cleaned = {key: _clean_int(row.get(key)) for key in _USAGE_KEYS}
     if cleaned["total_tokens"] <= 0:
         cleaned["total_tokens"] = cleaned["prompt_tokens"] + cleaned["completion_tokens"]
@@ -120,7 +130,13 @@ def _normalize_usage_row(row: dict[str, Any]) -> dict[str, int]:
             requests["estimated_requests"] = requests["requests"]
         else:
             requests["provider_requests"] = requests["requests"]
-    return {**cleaned, **requests}
+    telemetry: dict[str, int | float] = {
+        "cost_usd": _clean_float(row.get("cost_usd")),
+        "latency_ms": _clean_int(row.get("latency_ms")),
+        "ok_requests": _clean_int(row.get("ok_requests")),
+        "error_requests": _clean_int(row.get("error_requests")),
+    }
+    return {**cleaned, **requests, **telemetry}
 
 
 def _normalize_sources(raw: Any, fallback: dict[str, int]) -> dict[str, dict[str, int]]:
@@ -138,10 +154,16 @@ def _normalize_sources(raw: Any, fallback: dict[str, int]) -> dict[str, dict[str
             if current is None:
                 sources[source_key] = normalized
             else:
-                for key in (*_USAGE_KEYS, *_REQUEST_KEYS):
-                    current[key] = _clean_int(current.get(key)) + normalized[key]
+                for key in (*_USAGE_KEYS, *_REQUEST_KEYS, *_COST_KEYS, *_LATENCY_KEYS, *_COUNT_KEYS):
+                    current[key] = (
+                        (_clean_float(current[key]) if key in _COST_KEYS else _clean_int(current[key]))
+                        + (_clean_float(normalized[key]) if key in _COST_KEYS else _clean_int(normalized[key]))
+                    )
     if not sources and (fallback["total_tokens"] > 0 or fallback["requests"] > 0):
-        sources["user"] = {key: fallback[key] for key in (*_USAGE_KEYS, *_REQUEST_KEYS)}
+        sources["user"] = {
+            key: fallback[key]
+            for key in (*_USAGE_KEYS, *_REQUEST_KEYS, *_COST_KEYS, *_LATENCY_KEYS, *_COUNT_KEYS)
+        }
     return sources
 
 
@@ -167,7 +189,12 @@ def normalize_token_usage_state(raw: Any) -> dict[str, Any]:
             # settings request; drop it like any other malformed row.
             continue
         normalized = _normalize_usage_row(row)
-        if normalized["total_tokens"] <= 0 and normalized["requests"] <= 0:
+        if (
+            normalized["total_tokens"] <= 0
+            and normalized["requests"] <= 0
+            and normalized["error_requests"] <= 0
+            and normalized["cost_usd"] <= 0
+        ):
             continue
         days[date] = {
             "date": date,
@@ -235,6 +262,9 @@ def record_token_usage(
     source: str = "user",
     timezone_name: str | None = None,
     now: datetime | None = None,
+    latency_ms: int | None = None,
+    cost_usd: float | None = None,
+    ok: bool | None = None,
 ) -> dict[str, Any]:
     normalized = _normalize_usage(usage)
     if not normalized:
@@ -252,6 +282,11 @@ def record_token_usage(
             row["estimated_requests"] = _clean_int(row.get("estimated_requests")) + 1
         else:
             row["provider_requests"] = _clean_int(row.get("provider_requests")) + 1
+        if latency_ms is not None:
+            row["latency_ms"] = _clean_int(row.get("latency_ms")) + max(0, latency_ms)
+        if cost_usd is not None:
+            row["cost_usd"] = _clean_float(row.get("cost_usd")) + max(0.0, cost_usd)
+        _bump_ok_error(row, ok)
 
         source_key = _clean_source(source)
         sources: dict[str, dict[str, Any]] = dict(
@@ -265,6 +300,11 @@ def record_token_usage(
             source_row["estimated_requests"] = _clean_int(source_row.get("estimated_requests")) + 1
         else:
             source_row["provider_requests"] = _clean_int(source_row.get("provider_requests")) + 1
+        if latency_ms is not None:
+            source_row["latency_ms"] = _clean_int(source_row.get("latency_ms")) + max(0, latency_ms)
+        if cost_usd is not None:
+            source_row["cost_usd"] = _clean_float(source_row.get("cost_usd")) + max(0.0, cost_usd)
+        _bump_ok_error(source_row, ok)
         sources[source_key] = source_row
         row["sources"] = sources
 
@@ -272,6 +312,14 @@ def record_token_usage(
         if len(days_by_date) > _MAX_DAYS_RETAINED:
             state["days"] = dict(sorted(days_by_date.items())[-_MAX_DAYS_RETAINED:])
         return write_token_usage_state(state)
+
+
+def _bump_ok_error(row: dict[str, Any], ok: bool | None) -> None:
+    """Increment ok/error request counters based on *ok* (None = unknown)."""
+    if ok is True:
+        row["ok_requests"] = _clean_int(row.get("ok_requests")) + 1
+    elif ok is False:
+        row["error_requests"] = _clean_int(row.get("error_requests")) + 1
 
 
 def record_response_token_usage(
@@ -338,6 +386,8 @@ def token_usage_payload(
         longest_streak = max(longest_streak, running_streak)
 
     all_rows = list(days_by_date.values())
+    last_30_total_latency = sum(_clean_int(row.get("latency_ms")) for row in last_30)
+    last_30_requests = sum(_clean_int(row.get("requests")) for row in last_30)
     return {
         "days": day_rows,
         "total_tokens": sum(_clean_int(row.get("total_tokens")) for row in all_rows),
@@ -347,24 +397,84 @@ def token_usage_payload(
         "current_streak_days": current_streak,
         "longest_streak_days": longest_streak,
         "active_days_30d": sum(1 for row in last_30 if _clean_int(row.get("total_tokens")) > 0),
-        "requests_30d": sum(_clean_int(row.get("requests")) for row in last_30),
+        "requests_30d": last_30_requests,
+        "total_cost_usd": round(sum(_clean_float(row.get("cost_usd")) for row in all_rows), 4),
+        "cost_usd_30d": round(sum(_clean_float(row.get("cost_usd")) for row in last_30), 4),
+        "cost_usd_365d": round(sum(_clean_float(row.get("cost_usd")) for row in last_365), 4),
+        "error_requests_30d": sum(_clean_int(row.get("error_requests")) for row in last_30),
+        "avg_latency_ms_30d": (
+            round(last_30_total_latency / last_30_requests, 1) if last_30_requests else 0
+        ),
+        "total_latency_ms_30d": last_30_total_latency,
         "updated_at": state.get("updated_at"),
     }
+
+
+def estimate_cost_usd(
+    provider: str | None,
+    model: str | None,
+    usage: Mapping[str, Any] | None,
+    cost_rates: Mapping[str, Any] | None,
+) -> float:
+    """Estimate USD cost from token usage and a configurable per-1M price table.
+
+    Keys are matched ``"provider/model"`` → ``"provider"`` → ``"*"``. Each rate
+    maps to an object/dict with ``input`` and ``output`` per-1M-token prices.
+    Returns 0.0 when no matching rate is configured.
+    """
+    if not cost_rates:
+        return 0.0
+    rates = cast(Mapping[str, Any], cost_rates)
+    provider = provider or ""
+    model = model or ""
+    rate: Any = None
+    for key in (f"{provider}/{model}", provider, "*"):
+        if key in rates:
+            rate = rates[key]
+            break
+    if rate is None:
+        return 0.0
+    input_rate = _clean_float(getattr(rate, "input", None) if hasattr(rate, "input") else rate.get("input"))
+    output_rate = _clean_float(getattr(rate, "output", None) if hasattr(rate, "output") else rate.get("output"))
+    usage = usage or {}
+    input_tokens = _clean_int(usage.get("prompt_tokens"))
+    output_tokens = _clean_int(usage.get("completion_tokens"))
+    return round(
+        (input_tokens / 1_000_000) * input_rate
+        + (output_tokens / 1_000_000) * output_rate,
+        6,
+    )
 
 
 class TokenUsageHook(AgentHook):
     """Persist provider-reported token usage without coupling it to chat messages."""
 
-    def __init__(self, *, timezone_name: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        timezone_name: str | None = None,
+        cost_rates: Mapping[str, Any] | None = None,
+    ) -> None:
         super().__init__()
         self._timezone_name = timezone_name
+        self._cost_rates = dict(cost_rates or {})
 
     async def after_iteration(self, context: AgentHookContext) -> None:
         try:
+            ok = context.error is None and context.stop_reason not in ("error", "cancelled")
+            cost_usd = estimate_cost_usd(
+                context.provider,
+                context.model,
+                context.usage,
+                self._cost_rates,
+            )
             record_token_usage(
                 context.usage,
                 source=_source_from_session_key(context.session_key),
                 timezone_name=self._timezone_name,
+                latency_ms=context.latency_ms,
+                cost_usd=cost_usd,
+                ok=ok,
             )
         except Exception:
             logger.exception("failed to record token usage")

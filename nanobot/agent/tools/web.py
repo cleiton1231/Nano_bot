@@ -9,6 +9,7 @@ import html
 import json
 import os
 import re
+import time
 from collections.abc import Callable
 from typing import Any, cast
 from urllib.parse import parse_qsl, quote, urljoin, urlparse
@@ -480,7 +481,35 @@ class WebSearchTool(Tool):
         self._refresh_config()
         provider = self.config.provider.strip().lower() or "brave"
         n = min(max(count or self.config.max_results, 1), 10)
+        _started = time.monotonic()
 
+        def _record(ok: bool) -> None:
+            from nanobot.utils.searchusage import record_local_search_call
+
+            record_local_search_call(
+                provider,
+                latency_ms=int((time.monotonic() - _started) * 1000),
+                ok=ok,
+            )
+
+        try:
+            result = await self._dispatch(provider, query, n, time_range, auth_level, query_rewrite, kwargs)
+        except Exception:
+            _record(ok=False)
+            raise
+        _record(ok=not isinstance(result, ToolResult) or not result.is_error)
+        return result
+
+    async def _dispatch(
+        self,
+        provider: str,
+        query: str,
+        n: int,
+        time_range: str | None,
+        auth_level: int | None,
+        query_rewrite: bool | None,
+        kwargs: dict[str, Any],
+    ) -> str:
         if provider == "olostep":
             return await self._search_olostep(query, n)
         if provider == "volcengine":
