@@ -334,6 +334,7 @@ def serve(
     from nanobot.api.server import create_app
     from nanobot.bus.queue import MessageBus
     from nanobot.providers.image_generation import image_gen_provider_configs
+    from nanobot.security.rate_limit import RateLimiter
     from nanobot.session.manager import SessionManager
 
     _set_nanobot_logs(verbose)
@@ -384,6 +385,7 @@ def serve(
         agent_loop, model_name=model_name, request_timeout=timeout,
         api_key=api_key,
         prepare_agent=mcp_provider.connect,
+        rate_limiter=RateLimiter(runtime_config.security.rate_limit.requests_per_minute),
     )
 
     async def on_startup(_app: Any) -> None:

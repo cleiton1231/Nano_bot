@@ -131,6 +131,59 @@ async def test_api_key_protects_api_routes_but_not_health(aiohttp_client, mock_a
 
 @pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
 @pytest.mark.asyncio
+async def test_rate_limit_returns_429_on_burst(aiohttp_client, mock_agent, tmp_path) -> None:
+    from nanobot.config.loader import set_config_path
+    from nanobot.security.audit import audit_log_path
+    from nanobot.security.rate_limit import RateLimiter
+
+    set_config_path(tmp_path / "config.json")
+    log_path = audit_log_path()
+    if log_path.exists():
+        log_path.unlink()
+    try:
+        limiter = RateLimiter(limit_per_minute=3)
+        app = create_app(mock_agent, model_name="test-model", api_key=API_KEY, rate_limiter=limiter)
+        client = await aiohttp_client(app)
+
+        statuses = []
+        for _ in range(6):
+            resp = await client.get("/v1/models", headers=AUTH_HEADERS)
+            statuses.append(resp.status)
+
+        assert statuses[:3] == [200, 200, 200]
+        assert statuses[3:] == [429, 429, 429]
+
+        lines = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        assert any(line["event"] == "rate_limit" for line in lines)
+    finally:
+        set_config_path(None)
+
+
+@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
+@pytest.mark.asyncio
+async def test_auth_failure_is_audited(aiohttp_client, mock_agent, tmp_path) -> None:
+    from nanobot.config.loader import set_config_path
+    from nanobot.security.audit import audit_log_path
+
+    set_config_path(tmp_path / "config.json")
+    log_path = audit_log_path()
+    if log_path.exists():
+        log_path.unlink()
+    try:
+        app = create_app(mock_agent, model_name="test-model", api_key=API_KEY)
+        client = await aiohttp_client(app)
+
+        resp = await client.get("/v1/models", headers={"Authorization": "Bearer wrong"})
+        assert resp.status == 401
+
+        lines = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        assert any(line["event"] == "auth.failure" for line in lines)
+    finally:
+        set_config_path(None)
+
+
+@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
+@pytest.mark.asyncio
 async def test_api_routes_allow_requests_without_configured_api_key(aiohttp_client, mock_agent) -> None:
     app = create_app(mock_agent, model_name="test-model")
     client = await aiohttp_client(app)

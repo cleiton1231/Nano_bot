@@ -369,6 +369,23 @@ class GatewayConfig(Base):
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
 
 
+class RateLimitConfig(Base):
+    """In-process rate limiting for inbound message/API entry points.
+
+    A fixed-window counter per key (IP, session id, or user id).
+    ``requests_per_minute <= 0`` disables limiting entirely.
+    """
+
+    requests_per_minute: int = Field(default=60, ge=0)
+
+
+class SecurityConfig(Base):
+    """Security controls: rate limiting and the structured audit trail."""
+
+    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
+    audit_log: bool = True
+
+
 class MCPServerConfig(Base):
     """MCP server connection configuration (stdio or HTTP)."""
 
@@ -439,6 +456,7 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     model_presets: dict[str, ModelPresetConfig] = Field(
         default_factory=dict,

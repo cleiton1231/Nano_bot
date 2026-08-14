@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 from typing import Iterable
 
+from nanobot.security.audit import audit_security_event
+
 WORKSPACE_BOUNDARY_NOTE = (
     " (this is a hard policy boundary, not a transient failure; "
     "do not retry with shell tricks or alternative tools, and ask "
@@ -85,6 +87,13 @@ def require_path_within(
     """Resolve *path* and require it to be inside *root*."""
     resolved = Path(path).expanduser().resolve(strict=False)
     if not is_path_within(resolved, root):
+        audit_security_event(
+            "workspace_boundary",
+            origin="security.workspace_policy",
+            result="blocked",
+            path=str(resolved),
+            root=str(Path(root).expanduser().resolve(strict=False)),
+        )
         raise WorkspaceBoundaryError(
             message
             or f"Path {path} is outside allowed directory {Path(root).expanduser()}"
@@ -119,6 +128,13 @@ def resolve_allowed_path(
     )
     if not is_path_allowed(resolved, roots) and not exact_allowed:
         boundary = Path(allowed_root).expanduser() if allowed_root is not None else "allowed files"
+        audit_security_event(
+            "workspace_boundary",
+            origin="security.workspace_policy",
+            result="blocked",
+            path=str(resolved),
+            boundary=str(boundary),
+        )
         raise WorkspaceBoundaryError(
             f"Path {path} is outside allowed directory {boundary}"
             + WORKSPACE_BOUNDARY_NOTE

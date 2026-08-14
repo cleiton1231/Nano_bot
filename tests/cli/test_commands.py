@@ -2747,12 +2747,14 @@ def _patch_serve_runtime(monkeypatch, config: Config, seen: dict[str, object]) -
         request_timeout: float,
         api_key: str = "",
         prepare_agent=None,
+        rate_limiter=None,
     ):
         seen["agent_loop"] = agent_loop
         seen["model_name"] = model_name
         seen["request_timeout"] = request_timeout
         seen["api_key"] = api_key
         seen["prepare_agent"] = prepare_agent
+        seen["rate_limiter"] = rate_limiter
         return _FakeApiApp()
 
     def _fake_run_app(api_app, host: str, port: int, print):

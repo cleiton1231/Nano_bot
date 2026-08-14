@@ -18,6 +18,7 @@ from aiohttp import web
 from loguru import logger
 
 from nanobot.config.paths import get_media_dir
+from nanobot.security.audit import audit_security_event
 from nanobot.utils.helpers import safe_filename
 from nanobot.utils.media_decode import (
     MAX_FILE_SIZE,
@@ -463,6 +464,7 @@ def create_app(
     request_timeout: float = 120.0,
     api_key: str = "",
     prepare_agent: Callable[[], Awaitable[None]] | None = None,
+    rate_limiter: Any | None = None,
 ) -> web.Application:
     """Create the aiohttp application.
 
@@ -472,6 +474,7 @@ def create_app(
         request_timeout: Per-request timeout in seconds.
         api_key: Optional API key for Bearer-token authentication on API routes.
         prepare_agent: Optional application-owned readiness callback run before each turn.
+        rate_limiter: Optional ``RateLimiter`` guarding the API endpoints.
     """
     app = web.Application(client_max_size=20 * 1024 * 1024)  # 20MB for base64 images
     app[_AGENT_LOOP_KEY] = agent_loop
@@ -479,6 +482,25 @@ def create_app(
     app[_REQUEST_TIMEOUT_KEY] = request_timeout
     app[_SESSION_LOCKS_KEY] = {}  # per-user locks, keyed by session_key
     app[_PREPARE_AGENT_KEY] = prepare_agent
+
+    @web.middleware
+    async def rate_limit_middleware(
+        request: web.Request,
+        handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+    ) -> web.StreamResponse:
+        # Health checks and non-API routes are not subject to rate limiting.
+        if request.path != "/health" and rate_limiter is not None:
+            remote = request.remote or ""
+            if not rate_limiter.allow(remote):
+                audit_security_event(
+                    "rate_limit",
+                    origin="api.server",
+                    result="denied",
+                    remote=remote,
+                    path=request.path,
+                )
+                return _error_json(429, "Rate limit exceeded. Try again later.")
+        return await handler(request)
 
     @web.middleware
     async def auth_middleware(
@@ -492,11 +514,28 @@ def create_app(
             return await handler(request)
         auth = request.headers.get("Authorization", "")
         if not auth.startswith("Bearer "):
+            audit_security_event(
+                "auth.failure",
+                origin="api.server",
+                result="denied",
+                remote=request.remote or "",
+                path=request.path,
+                reason="missing_header",
+            )
             return _error_json(401, "Missing Authorization header. Use: Bearer <api_key>")
         if not hmac.compare_digest(auth[len("Bearer "):], api_key):
+            audit_security_event(
+                "auth.failure",
+                origin="api.server",
+                result="denied",
+                remote=request.remote or "",
+                path=request.path,
+                reason="invalid_key",
+            )
             return _error_json(401, "Invalid API key")
         return await handler(request)
 
+    app.middlewares.append(rate_limit_middleware)
     app.middlewares.append(auth_middleware)
 
     app.router.add_post("/v1/chat/completions", handle_chat_completions)

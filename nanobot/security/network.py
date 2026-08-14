@@ -13,6 +13,8 @@ from urllib.request import getproxies, proxy_bypass
 
 import httpx
 
+from nanobot.security.audit import audit_security_event
+
 _BLOCKED_NETWORKS = [
     ipaddress.ip_network("0.0.0.0/8"),
     ipaddress.ip_network("10.0.0.0/8"),
@@ -140,6 +142,13 @@ def resolve_url_target(
         return True, "", tuple(dict.fromkeys(str(_normalize_addr(addr)) for addr in addrs))
     for addr in addrs:
         if _is_private(addr):
+            audit_security_event(
+                "ssrf.block",
+                origin="security.network",
+                result="blocked",
+                host=hostname,
+                addr=str(_normalize_addr(addr)),
+            )
             return False, f"Blocked: {hostname} resolves to private/internal address {addr}", ()
 
     return True, "", tuple(dict.fromkeys(str(_normalize_addr(addr)) for addr in addrs))
@@ -302,6 +311,13 @@ def validate_resolved_url(url: str) -> tuple[bool, str]:
     try:
         addr = ipaddress.ip_address(hostname)
         if _is_private(addr):
+            audit_security_event(
+                "ssrf.block",
+                origin="security.network",
+                result="blocked",
+                host=hostname,
+                addr=str(_normalize_addr(addr)),
+            )
             return False, f"Redirect target is a private address: {addr}"
     except ValueError:
         # hostname is a domain name, resolve it
@@ -315,6 +331,13 @@ def validate_resolved_url(url: str) -> tuple[bool, str]:
             except ValueError:
                 continue
             if _is_private(addr):
+                audit_security_event(
+                    "ssrf.block",
+                    origin="security.network",
+                    result="blocked",
+                    host=hostname,
+                    addr=str(_normalize_addr(addr)),
+                )
                 return False, f"Redirect target {hostname} resolves to private address {addr}"
 
     return True, ""

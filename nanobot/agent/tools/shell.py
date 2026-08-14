@@ -40,6 +40,7 @@ from nanobot.agent.tools.schema import (
 )
 from nanobot.config.paths import get_media_dir
 from nanobot.config_base import Base
+from nanobot.security.audit import audit_security_event
 from nanobot.security.workspace_access import current_scope_allows_loopback, current_tool_workspace
 from nanobot.security.workspace_policy import is_path_within
 
@@ -477,6 +478,12 @@ class ExecTool(Tool):
             workspace_root=workspace_root,
         )
         if guard_error:
+            audit_security_event(
+                "exec.denied",
+                origin="agent.tools.shell",
+                result="denied",
+                reason=guard_error.splitlines()[0] if guard_error else "",
+            )
             return guard_error
 
         if self.sandbox:

@@ -77,6 +77,7 @@ def load_config(config_path: Path | None = None) -> Config:
             ) from exc
         config.bind_source_path(path)
         _apply_ssrf_whitelist(config)
+        _apply_security_config(config)
         return config
 
     try:
@@ -133,6 +134,7 @@ def load_config(config_path: Path | None = None) -> Config:
 
     config.bind_source_path(path)
     _apply_ssrf_whitelist(config)
+    _apply_security_config(config)
     return config
 
 
@@ -141,6 +143,13 @@ def _apply_ssrf_whitelist(config: Config) -> None:
     from nanobot.security.network import configure_ssrf_whitelist
 
     configure_ssrf_whitelist(config.tools.ssrf_whitelist)
+
+
+def _apply_security_config(config: Config) -> None:
+    """Apply the security audit-log toggle to the audit module."""
+    from nanobot.security.audit import set_audit_enabled
+
+    set_audit_enabled(config.security.audit_log)
 
 
 def save_config(config: Config, config_path: Path | None = None) -> None:
