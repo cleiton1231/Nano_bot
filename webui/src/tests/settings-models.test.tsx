@@ -89,6 +89,27 @@ async function togglePresetEditor(name = "primary") {
 describe("Settings models", () => {
   installSettingsViewTestHooks();
 
+  it("distinguishes the editable display name from the stable command name", async () => {
+    const payload = settingsPayload();
+    payload.model_presets[0] = {
+      ...payload.model_presets[0],
+      name: "openai",
+      label: "minimax",
+    };
+    payload.model_call_order = ["openai"];
+    payload.agent.model_preset = "openai";
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+
+    renderSettingsView({ initialSection: "models", initialSettings: payload });
+
+    await togglePresetEditor("openai");
+
+    expect(screen.getByText("Display name")).toBeInTheDocument();
+    expect(
+      screen.getByText("Shown in the interface. The command name stays /model openai."),
+    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue("minimax")).toBeInTheDocument();
+  });
 
   it("keeps generation parameters collapsed until advanced options are opened", async () => {
     vi.stubGlobal(
@@ -165,7 +186,7 @@ describe("Settings models", () => {
     expect(editor).toHaveClass(
       "slide-in-from-top-1",
       "lg:max-w-6xl",
-      "rounded-[18px]",
+      "rounded-floating",
     );
     expect(within(editor).getByDisplayValue("Primary")).toBeInTheDocument();
     const deleteButton = within(editor).getByRole("button", { name: "Delete" });
