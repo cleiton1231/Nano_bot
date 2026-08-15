@@ -28,8 +28,7 @@ Configuração de provider (`~/.nanobot/config.json`, exemplo mínimo):
 {
   "providers": {
     "local": {
-      "type": "openai-compatible",
-      "baseUrl": "http://127.0.0.1:8080/v1",
+      "apiBase": "http://127.0.0.1:8080/v1",
       "apiKey": "not-needed"
     }
   }
@@ -93,7 +92,7 @@ Isso é o que você pediu pra deixar explícito. Nada aqui é "malicioso", é o 
 | Superfície | Sai da máquina? | Comportamento padrão | O que fazer |
 |---|---|---|---|
 | **WebUI** | Não | Bind em `127.0.0.1:8765`, não exposto à LAN no primeiro run | Manter assim; não habilitar LAN a menos que necessário |
-| **Web search** | **Sim** | Provider padrão usa Brave Search API (ou outro configurado) — cada busca sai pra fora | Desativar a tool se não for usar, ou trocar por provider que você confia/paga |
+| **Web search** | **Sim** | Provider padrão usa DuckDuckGo (sem necessidade de API key) — cada busca sai pra fora | Desativar a tool se não for usar, ou trocar por provider que você confia/paga |
 | **Web fetch** | **Sim** | Busca URLs arbitrárias que o LLM decidir buscar; tem guard SSRF embutido | Manter o SSRF guard ligado; não adicionar CIDRs exceção sem motivo forte |
 | **MCP servers** | **Depende** | Cada MCP configurado é uma conexão de saída própria (stdio local ou HTTP/SSE remoto) | Só adicionar MCP que você configurou explicitamente; MCP remoto = mais uma parte confiando em terceiro |
 | **Canais de chat** (Telegram, Discord, WhatsApp etc.) | **Sim** | Cada canal exige token próprio e abre uma sessão de longa duração com o serviço externo | Não configurar nenhum canal pra esse bot — ele é RAG pessoal, não precisa ficar acessível de fora |
@@ -137,10 +136,10 @@ Isso limita o dano de qualquer bug de tool (exec, fs) ao escopo desse usuário, 
 
 ### 5.3 Alternativa mais forte — Docker
 
-O projeto já publica imagem oficial não-root (UID 1000) com bwrap pré-instalado, e o `docker-compose.yml` já dropa capabilities exceto `SYS_ADMIN` (necessário pro namespace isolation do bwrap). Prefira essa rota se quiser isolamento de filesystem real:
+O projeto já publica imagem oficial não-root (UID 1000) com bwrap pré-instalado. Note que `docker compose up -d` sozinho **NÃO** ativa `SYS_ADMIN`/bwrap — é necessário usar o arquivo de override para isolamento de filesystem real:
 
 ```bash
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.bwrap.yml up -d
 ```
 
 Monte só a pasta do workspace de faculdade como volume, nada além disso.
@@ -167,22 +166,33 @@ Na prática, mais simples: se você **não vai usar web_search nem canais de cha
 ```json
 {
   "gateway": {
-    "webui": { "bind": "127.0.0.1", "port": 8765 }
+    "host": "127.0.0.1",
+    "port": 18790
+  },
+  "providers": {
+    "local": {
+      "apiBase": "http://127.0.0.1:8080/v1",
+      "apiKey": "not-needed"
+    }
   },
   "tools": {
-    "exec": { "sandbox": "bwrap" },
-    "fs": { "restrict_to_workspace": true },
-    "web_search": { "enabled": false },
-    "web_fetch": { "enabled": true, "ssrfExemptCidrs": [] }
+    "restrictToWorkspace": true,
+    "exec": {
+      "sandbox": "bwrap"
+    },
+    "web": {
+      "enable": false
+    },
+    "ssrfWhitelist": [],
+    "mcpServers": {}
   },
-  "channels": {},
-  "mcpServers": {}
+  "channels": {}
 }
 ```
 
-- `web_search`: `false` até você decidir que precisa e escolher provider conscientemente.
+- `tools.web.enable`: `false` até você decidir que precisa e escolher provider conscientemente.
 - `channels: {}`: nenhum canal de chat exposto — sem Telegram/Discord/WhatsApp nesse bot.
-- `mcpServers: {}`: nenhum MCP até você adicionar um específico, sabendo o que ele acessa.
+- `tools.mcpServers: {}`: nenhum MCP até você adicionar um específico, sabendo o que ele acessa.
 - `apiKey` de qualquer provider: sempre via `${VAR_DE_AMBIENTE}` no JSON, nunca em texto puro — o próprio `SECURITY.md` do projeto recomenda isso. `chmod 600` no arquivo de config.
 
 ---
@@ -195,7 +205,7 @@ A seção 4 deste documento foi montada via docs públicas e busca web. O repo t
 |---|---|---|
 | Limites de segurança do projeto | `.agent/security.md` | Documento oficial do que é considerado fronteira de segurança — deveria ser a fonte de verdade da seção 4, não meu levantamento |
 | Restrições de arquitetura | `.agent/design.md` | Decisões de design que explicam *por que* algo é feito assim (relevante se for questionar um default) |
-| Módulo de segurança | `nanobot/security/` | Código real: PTH file guard e outras medidas ativadas no entry point do CLI |
+| Módulo de segurança | `nanobot/security/` | Código real: proteção SSRF, controle de acesso a workspace, rate limit e auditoria |
 | Registro de tools | `nanobot/agent/tools/registry.py` | Nome exato de cada tool registrada — usar pra confirmar a chave certa se `web_search: false` no config não for suficiente |
 | Config schema | `nanobot/config/schema.py`, `nanobot/config/loader.py` | Schema Pydantic real — confirma quais chaves de config existem de fato, incluindo aliases camelCase |
 | Gotchas conhecidos | `.agent/gotchas.md` | Comportamentos não-óbvios já mapeados pelos mantenedores — vale ler antes de debugar algo "estranho" sozinho |
