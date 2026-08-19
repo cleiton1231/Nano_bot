@@ -14,7 +14,10 @@ from nanobot.config.schema import (
     Config,
     _resolve_tool_config_refs,  # pyright: ignore[reportPrivateUsage]
 )
-from nanobot.utils.helpers import _write_text_atomic  # pyright: ignore[reportPrivateUsage]
+from nanobot.utils.helpers import (
+    _write_text_atomic,  # pyright: ignore[reportPrivateUsage]
+    ensure_private_dir,
+)
 
 # Global variable to store current config path (for multi-instance support)
 _current_config_path: Path | None = None
@@ -170,7 +173,10 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
         config_path: Optional path to save to. Uses default if not provided.
     """
     path = config_path or get_config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    # Owner-only: created here rather than with a bare mkdir so a fresh install
+    # never has a world-readable data directory, not even for the moment
+    # between writing config.json and the first call through get_data_dir().
+    ensure_private_dir(path.parent)
 
     data = config.model_dump(mode="json", by_alias=True)
     # OAuth credentials live in dedicated token stores. Persist only the
@@ -189,7 +195,11 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
             data.setdefault("providers", {})[alias] = settings
 
     # Temp + replace so a crash mid-write cannot leave a truncated config.json.
-    _write_text_atomic(path, json.dumps(data, indent=2, ensure_ascii=False))
+    # 0600 is pinned rather than inherited: this file holds plaintext API keys
+    # whenever the operator did not use a ${VAR} reference, and SECURITY.md
+    # tells them to chmod it by hand. Enforcing it here also repairs a config
+    # created with a permissive umask by an installer or a container entrypoint.
+    _write_text_atomic(path, json.dumps(data, indent=2, ensure_ascii=False), mode=0o600)
 
 
 def merge_missing_defaults(existing: object, defaults: object) -> object:

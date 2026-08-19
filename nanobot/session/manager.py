@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import stat
+import time
 from collections import OrderedDict
 from contextlib import contextmanager, suppress
 from copy import deepcopy
@@ -1288,6 +1289,39 @@ class JsonlSessionStore:
                 logger.warning("Failed to delete session file {}: {}", path, e)
         return deleted
 
+    def prune_expired(self, max_age_days: int) -> list[str]:
+        """Delete sessions untouched for longer than *max_age_days*.
+
+        Returns the session keys that were removed. ``max_age_days <= 0``
+        disables retention and returns an empty list, so callers can pass the
+        configured value straight through.
+
+        Age is taken from the file's mtime rather than the ``updated_at``
+        metadata record: mtime is written by the same atomic replace that
+        persists a turn, so it cannot drift from the file's real last write,
+        and reading it does not require parsing every session on startup.
+        """
+        if max_age_days <= 0:
+            return []
+        cutoff = time.time() - (max_age_days * 86400)
+        removed: list[str] = []
+        with self._session_files_lock:
+            for path in sorted(self.sessions_dir.glob("*.jsonl")):
+                # Returns the decoded session key, or None for a file whose name
+                # is not one this store wrote — leave those alone.
+                session_key = self.session_key_from_path(path)
+                if session_key is None:
+                    continue
+                try:
+                    if path.stat().st_mtime >= cutoff:
+                        continue
+                    path.unlink()
+                except OSError as exc:
+                    logger.warning("Failed to prune expired session {}: {}", path, exc)
+                    continue
+                removed.append(session_key)
+        return removed
+
     def read(self, key: str) -> SessionPayload | None:
         with self._session_files_lock:
             return self._read_unlocked(key)
@@ -1685,6 +1719,17 @@ class SessionManager:
         """Delete a persisted session and invalidate its cache entry."""
         self.invalidate(key)
         return self._store.delete(key)
+
+    def prune_expired(self, max_age_days: int) -> list[str]:
+        """Delete sessions idle beyond the retention window and drop their cache.
+
+        Returns the removed session keys. Pruning only touches the JSONL store,
+        so a custom ``store`` implementation is left alone.
+        """
+        removed = self._jsonl_store.prune_expired(max_age_days)
+        for key in removed:
+            self.invalidate(key)
+        return removed
 
     def restore_sessions_to_workspace(self) -> SessionRestoreResult:
         """Restore session files to the pre-relocation path for an explicit rollback."""

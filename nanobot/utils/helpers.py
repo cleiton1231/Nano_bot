@@ -346,6 +346,32 @@ def ensure_dir(path: Path) -> Path:
     return path
 
 
+# Owner-only. Applied to directories holding credentials, chat history, and the
+# security audit trail. SECURITY.md tells operators to run `chmod 700 ~/.nanobot`
+# and `chmod 700 ~/.nanobot/whatsapp-auth` by hand; enforcing it here means a
+# fresh install is not world-readable in the window before they get around to it.
+PRIVATE_DIR_MODE = 0o700
+
+
+def ensure_private_dir(path: Path) -> Path:
+    """Ensure a directory exists and is not readable by other local users.
+
+    ``mkdir(mode=...)`` only applies to a directory this call actually creates,
+    so an install predating this enforcement (or one restored from a backup)
+    keeps whatever mode it had. Re-check and tighten it when it is group- or
+    world-accessible.
+
+    Permission enforcement is best effort: on Windows and on filesystems
+    without POSIX modes chmod cannot help, and failing to start the agent over
+    it would be worse than the loose mode.
+    """
+    path.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIR_MODE)
+    with suppress(OSError):
+        if stat.S_IMODE(path.stat().st_mode) & 0o077:
+            os.chmod(path, PRIVATE_DIR_MODE)
+    return path
+
+
 def timestamp() -> str:
     """Current ISO timestamp."""
     return datetime.now().isoformat()
@@ -537,15 +563,25 @@ def _cleanup_tool_result_buckets(root: Path, current_bucket: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _write_text_atomic(path: Path, content: str) -> None:
+def _write_text_atomic(path: Path, content: str, *, mode: int | None = None) -> None:
+    """Replace *path* with *content* atomically.
+
+    ``mode`` pins the permissions of the result. It is set on the temporary file
+    before the content is written, so the final path is never observable with a
+    looser mode — unlike chmod'ing after the rename, which leaves a window in
+    which a secrets file exists at its real name with the process umask. Pass it
+    for anything holding credentials or access-control state. Without it the
+    existing file's mode is preserved, and a new file gets the process umask.
+    """
     tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    existing_mode: int | None = None
-    with suppress(OSError):
-        existing_mode = stat.S_IMODE(path.stat().st_mode)
+    target_mode: int | None = mode
+    if target_mode is None:
+        with suppress(OSError):
+            target_mode = stat.S_IMODE(path.stat().st_mode)
     try:
         with open(tmp, "w", encoding="utf-8") as f:
-            if existing_mode is not None:
-                os.chmod(tmp, existing_mode)
+            if target_mode is not None:
+                os.chmod(tmp, target_mode)
             f.write(content)
             f.flush()
             os.fsync(f.fileno())

@@ -32,6 +32,7 @@ from nanobot.cli.webui_support import (
 )
 from nanobot.config.paths import is_default_workspace
 from nanobot.config.schema import Config
+from nanobot.security.audit import audit_security_event
 from nanobot.security.network import is_loopback_host
 from nanobot.session.keys import UNIFIED_SESSION_KEY, last_channel_from_metadata
 from nanobot.utils.evaluator import evaluate_response, resolve_evaluator_prompt
@@ -386,6 +387,28 @@ def _run_gateway(
             console.print(f"[red]Error: {exc}[/red]")
             raise typer.Exit(1) from exc
     session_manager = SessionManager(config.workspace_path)
+
+    # Session retention, swept once here rather than on every load: chat history
+    # is the most sensitive state nanobot keeps on disk, and a startup sweep is
+    # the whole mechanism. Guarded on the setting rather than delegating the
+    # no-op to prune_expired, so a disabled retention policy costs nothing and
+    # does not require the session manager to implement it.
+    retention_days = config.security.session_max_age_days
+    if retention_days > 0:
+        expired_sessions = session_manager.prune_expired(retention_days)
+        if expired_sessions:
+            logger.info(
+                "Pruned {} session(s) idle for more than {} day(s)",
+                len(expired_sessions),
+                retention_days,
+            )
+            audit_security_event(
+                "session.expired",
+                origin="cli.gateway_runtime",
+                result="deleted",
+                count=len(expired_sessions),
+                max_age_days=retention_days,
+            )
 
     # Self-heal the gateway state file with the current PID after any restart.
     from nanobot.config.loader import get_config_path

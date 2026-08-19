@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from nanobot.utils.helpers import ensure_dir
+from nanobot.utils.helpers import ensure_dir, ensure_private_dir
 
 
 def get_config_path() -> Path:
@@ -18,13 +18,23 @@ def get_config_path() -> Path:
 
 
 def get_data_dir() -> Path:
-    """Return the instance-level runtime data directory."""
-    return ensure_dir(get_config_path().parent)
+    """Return the instance-level runtime data directory.
+
+    Owner-only (0700): this directory holds ``config.json`` with plaintext API
+    keys, ``security.log``, chat history, and the WhatsApp session database.
+    """
+    return ensure_private_dir(get_config_path().parent)
 
 
 def get_runtime_subdir(name: str) -> Path:
-    """Return a named runtime subdirectory under the instance data dir."""
-    return ensure_dir(get_data_dir() / name)
+    """Return a named runtime subdirectory under the instance data dir.
+
+    Also owner-only. A 0700 parent already stops other local users from
+    traversing in, but ``whatsapp-auth`` in particular is documented in
+    SECURITY.md as mode 0700, so the mode is set here rather than relying on
+    the parent alone.
+    """
+    return ensure_private_dir(get_data_dir() / name)
 
 
 def get_media_dir(channel: str | None = None) -> Path:

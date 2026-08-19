@@ -82,7 +82,9 @@ def _save(data: dict[str, Any]) -> None:
         "approved": {ch: sorted(list(cast(set[str], users))) for ch, users in approved.items()},
         "pending": dict(pending),
     }
-    _write_text_atomic(path, json.dumps(payload, indent=2, ensure_ascii=False))
+    # Owner-only: this file is the channel allow-list, so it decides who may
+    # talk to the agent.
+    _write_text_atomic(path, json.dumps(payload, indent=2, ensure_ascii=False), mode=0o600)
 
 
 def _gc_pending(data: dict[str, Any]) -> None:
