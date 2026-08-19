@@ -380,10 +380,16 @@ class RateLimitConfig(Base):
 
 
 class SecurityConfig(Base):
-    """Security controls: rate limiting and the structured audit trail."""
+    """Security controls: rate limiting, audit trail, and session retention."""
 
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
     audit_log: bool = True
+    # Delete conversation sessions untouched for this many days, swept once at
+    # gateway startup. Chat history is the most sensitive thing nanobot keeps on
+    # disk, and without this it accumulates for the life of the install. Off by
+    # default (0): silently deleting a user's history is not something to opt
+    # them into, so retention is an explicit choice.
+    session_max_age_days: int = Field(default=0, ge=0)
 
 
 class CostRateConfig(Base):

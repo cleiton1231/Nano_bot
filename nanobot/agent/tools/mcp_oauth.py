@@ -146,9 +146,9 @@ def _write_store_unlocked(path: Path, payload: _CredentialStore) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with suppress(OSError):
         os.chmod(path.parent, 0o700)
-    _write_text_atomic(path, json.dumps(payload, indent=2, ensure_ascii=False))
-    with suppress(OSError):
-        os.chmod(path, 0o600)
+    # Pinned on the temp file rather than chmod'ed after the rename: an OAuth
+    # token must never exist at its real name with the process umask.
+    _write_text_atomic(path, json.dumps(payload, indent=2, ensure_ascii=False), mode=0o600)
 
 
 class MCPOAuthStorage:

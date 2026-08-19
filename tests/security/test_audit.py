@@ -89,3 +89,22 @@ def test_log_file_is_created_with_restricted_permissions(audit_log) -> None:
 
     mode = os.stat(audit_log).st_mode & 0o777
     assert mode == 0o600
+
+
+def test_log_file_permissions_are_repaired_on_existing_file(audit_log) -> None:
+    """A log left world-readable by an older build is tightened on next write."""
+    import os
+    import stat
+
+    from nanobot.security import audit as audit_module
+
+    audit.audit_security_event("auth.failure", origin="api.server", result="denied")
+    # Simulate a log created before the mode was enforced.
+    audit_module._hardened_paths.clear()
+    os.chmod(audit_log, 0o644)
+    assert stat.S_IMODE(os.stat(audit_log).st_mode) == 0o644
+
+    audit.audit_security_event("rate_limit", origin="api.server", result="denied")
+
+    assert stat.S_IMODE(os.stat(audit_log).st_mode) == 0o600
+    assert len(_read_lines(audit_log)) == 2

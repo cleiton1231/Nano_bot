@@ -38,13 +38,27 @@ from nanobot.agent.tools.schema import (
     StringSchema,
     tool_parameters_schema,
 )
-from nanobot.config.paths import get_media_dir
+from nanobot.config.paths import get_data_dir, get_media_dir
 from nanobot.config_base import Base
 from nanobot.security.audit import audit_security_event
 from nanobot.security.workspace_access import current_scope_allows_loopback, current_tool_workspace
 from nanobot.security.workspace_policy import is_path_within
 
 _IS_WINDOWS = sys.platform == "win32"
+
+# Entries under the instance data directory that hold credentials or
+# access-control state. The agent has no legitimate reason to read or write
+# them, and `cat`-ing config.json would echo plaintext API keys straight back
+# into a chat channel. Named explicitly rather than blocking the whole data
+# directory, because the default workspace (~/.nanobot/workspace), the media
+# directory, and the application log all live under it too.
+_PROTECTED_DATA_ENTRIES = (
+    "config.json",    # plaintext API keys and provider baseURL
+    "security.log",   # security audit trail
+    "pairing.json",   # channel allow-list
+    "auth",           # xAI / MCP OAuth token stores
+    "whatsapp-auth",  # neonize session database
+)
 _PROCESS_TREE_OWNER_ATTR = "_nanobot_process_tree_owner"
 
 
@@ -249,6 +263,9 @@ class ExecTool(Tool):
             r"\b(?:cp|mv)\b(?:\s+[^\s|;&<>]+)+\s+\S*(?:history\.jsonl|\.dream_cursor)",  # cp/mv target
             r"\bdd\b[^|;&<>]*\bof=\S*(?:history\.jsonl|\.dream_cursor)",  # dd of=
             r"\bsed\s+-i[^|;&<>]*(?:history\.jsonl|\.dream_cursor)",  # sed -i
+            # Long-form spellings of the rm flags blocked above. `rm -rf` was
+            # caught while `rm --recursive --force` was not.
+            r"\brm\s+(?:-\S+\s+)*--(?:recursive|force)\b",
         ]
         self.allow_patterns = allow_patterns or []
         self.restrict_to_workspace = restrict_to_workspace
@@ -866,6 +883,10 @@ class ExecTool(Tool):
             if self.allow_patterns:
                 return ToolResult.error("Error: Command blocked by allowlist filter (not in allowlist)")
 
+        protected_error = self._guard_instance_data_paths(cmd)
+        if protected_error:
+            return protected_error
+
         from nanobot.security.network import contains_internal_url
         if contains_internal_url(
             cmd,
@@ -939,6 +960,42 @@ class ExecTool(Tool):
                         + _WORKSPACE_BOUNDARY_NOTE
                     )
 
+        return None
+
+    def _guard_instance_data_paths(self, command: str) -> str | None:
+        """Block commands touching nanobot's own credential and state files.
+
+        Applied regardless of ``restrict_to_workspace``: that setting is off by
+        default, and these files are exactly what an injected instruction would
+        reach for. Containment is checked on the resolved path, so a deeper path
+        into a protected directory (``auth/xai.json``) is covered as well.
+
+        Known gap: ``_extract_absolute_paths`` does not recognise a token that
+        begins with a shell variable, so ``$HOME/.nanobot/config.json`` does not
+        reach this check — the same blind spot the workspace guard has.
+        """
+        try:
+            data_dir = get_data_dir().resolve()
+        except OSError:
+            return None
+
+        protected: list[Path] = []
+        for name in _PROTECTED_DATA_ENTRIES:
+            with suppress(OSError):
+                protected.append((data_dir / name).resolve())
+
+        for raw in self._extract_absolute_paths(command):
+            try:
+                expanded = os.path.expandvars(raw.strip())
+                candidate = Path(expanded).expanduser().resolve()
+            except Exception:
+                continue
+            for target in protected:
+                if candidate == target or is_path_within(candidate, target):
+                    return ToolResult.error(
+                        "Error: Command blocked by safety guard "
+                        "(nanobot credential/state file)"
+                    )
         return None
 
     @staticmethod

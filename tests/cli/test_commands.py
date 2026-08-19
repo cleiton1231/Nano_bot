@@ -2843,6 +2843,74 @@ def test_gateway_uses_workspace_directory_for_cron_store(monkeypatch, tmp_path: 
     assert seen["cron_store"] == config.workspace_path / "cron" / "jobs.json"
 
 
+def test_gateway_skips_session_pruning_when_retention_is_disabled(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """With retention off (the default) the session manager is never asked to prune."""
+    config_file = _write_instance_config(tmp_path)
+    config = Config()
+    config.agents.defaults.workspace = str(tmp_path / "config-workspace")
+    assert config.security.session_max_age_days == 0
+
+    class _NoPruneSessionManager:
+        def __init__(self, _workspace) -> None:
+            pass
+
+        def prune_expired(self, _max_age_days: int) -> list[str]:
+            raise AssertionError("prune_expired must not run when retention is disabled")
+
+    class _StopCron:
+        def __init__(self, _store_path: Path) -> None:
+            raise _StopGatewayError("stop")
+
+    _patch_cli_command_runtime(
+        monkeypatch,
+        config,
+        message_bus=lambda: object(),
+        session_manager=_NoPruneSessionManager,
+        cron_service=_StopCron,
+    )
+
+    result = runner.invoke(app, ["gateway", "--config", str(config_file)])
+
+    assert isinstance(result.exception, _StopGatewayError)
+
+
+def test_gateway_prunes_expired_sessions_when_retention_is_configured(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config_file = _write_instance_config(tmp_path)
+    config = Config()
+    config.agents.defaults.workspace = str(tmp_path / "config-workspace")
+    config.security.session_max_age_days = 30
+    seen: dict[str, object] = {}
+
+    class _PruningSessionManager:
+        def __init__(self, _workspace) -> None:
+            pass
+
+        def prune_expired(self, max_age_days: int) -> list[str]:
+            seen["max_age_days"] = max_age_days
+            return ["telegram:stale"]
+
+    class _StopCron:
+        def __init__(self, _store_path: Path) -> None:
+            raise _StopGatewayError("stop")
+
+    _patch_cli_command_runtime(
+        monkeypatch,
+        config,
+        message_bus=lambda: object(),
+        session_manager=_PruningSessionManager,
+        cron_service=_StopCron,
+    )
+
+    result = runner.invoke(app, ["gateway", "--config", str(config_file)])
+
+    assert isinstance(result.exception, _StopGatewayError)
+    assert seen["max_age_days"] == 30
+
+
 def test_gateway_unbound_agent_cron_is_skipped(
     monkeypatch, tmp_path: Path
 ) -> None:

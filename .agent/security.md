@@ -12,6 +12,31 @@ Shell execution (`ExecTool`, `agent/tools/shell.py`) also respects `restrict_to_
 
 **Rule**: Any new path-handling logic must go through the workspace path resolver or perform an equivalent containment check with explicit read/write capability semantics.
 
+## Instance Data Protection
+
+`ExecTool._guard_instance_data_paths` (`agent/tools/shell.py`) blocks shell
+commands that resolve to nanobot's own credential and state files under the
+instance data directory: `config.json`, `security.log`, `pairing.json`,
+`auth/`, and `whatsapp-auth/`. It runs on every command regardless of
+`restrict_to_workspace`, because that setting is off by default and reading
+`config.json` would echo plaintext API keys into a chat channel. The workspace,
+the media directory, and `logs/` deliberately stay reachable — the default
+workspace lives under the data directory.
+
+Files at rest follow the same boundary: `utils/helpers.ensure_private_dir`
+creates data directories `0700`, and `_write_text_atomic(..., mode=0o600)` pins
+the mode on the temporary file so a secrets file is never observable at its
+real name with the process umask.
+
+**Rule**: A new file holding credentials or access-control state belongs in
+`_PROTECTED_DATA_ENTRIES` and must be written with an explicit `mode`, not
+chmod'ed after the fact.
+
+**Known gap**: `_extract_absolute_paths` does not recognise a token beginning
+with a shell variable, so `$HOME/.nanobot/config.json` reaches neither this
+guard nor the workspace containment check. Any new path-based guard inherits
+that blind spot.
+
 ## SSRF Protection
 
 All outbound HTTP requests from agent tools must pass through the shared URL guards in `security/network.py` (`validate_url_target` or `resolve_url_target`). By default they block loopback, RFC1918 private addresses, CGNAT ranges, link-local ranges, and cloud metadata endpoints (including `169.254.169.254`).
