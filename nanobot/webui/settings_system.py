@@ -64,6 +64,7 @@ class SystemSettingsOperations:
 class SystemSettingsPayload(TypedDict):
     runtime: dict[str, Any]
     usage: dict[str, Any]
+    search_usage: dict[str, Any]
     advanced: dict[str, Any]
     version: dict[str, Any]
     docs: dict[str, Any]

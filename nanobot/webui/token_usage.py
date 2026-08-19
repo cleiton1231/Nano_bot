@@ -130,6 +130,8 @@ def _normalize_usage_row(row: dict[str, Any]) -> dict[str, int | float]:
             requests["estimated_requests"] = requests["requests"]
         else:
             requests["provider_requests"] = requests["requests"]
+    # cost_usd is a fractional monetary value; all other fields are integer
+    # counters.  The union keeps the single dict return without splitting.
     telemetry: dict[str, int | float] = {
         "cost_usd": _clean_float(row.get("cost_usd")),
         "latency_ms": _clean_int(row.get("latency_ms")),
@@ -139,8 +141,12 @@ def _normalize_usage_row(row: dict[str, Any]) -> dict[str, int | float]:
     return {**cleaned, **requests, **telemetry}
 
 
-def _normalize_sources(raw: Any, fallback: dict[str, int]) -> dict[str, dict[str, int]]:
-    sources: dict[str, dict[str, int]] = {}
+def _normalize_sources(
+    raw: Any, fallback: dict[str, int | float],
+) -> dict[str, dict[str, int | float]]:
+    # int | float because _normalize_usage_row includes cost_usd (float)
+    # alongside integer token/request counters.
+    sources: dict[str, dict[str, int | float]] = {}
     if isinstance(raw, dict):
         for source, row_value in cast(dict[Any, Any], raw).items():
             if not isinstance(row_value, dict):
@@ -424,7 +430,7 @@ def estimate_cost_usd(
     """
     if not cost_rates:
         return 0.0
-    rates = cast(Mapping[str, Any], cost_rates)
+    rates = cost_rates
     provider = provider or ""
     model = model or ""
     rate: Any = None

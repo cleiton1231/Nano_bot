@@ -234,9 +234,12 @@ def _read_search_state() -> dict[str, Any]:
             raw = json.load(f)
     except (OSError, json.JSONDecodeError):
         return _empty_search_state()
-    if not isinstance(raw, dict) or not isinstance(raw.get("days"), dict):
+    if not isinstance(raw, dict):
         return _empty_search_state()
-    return raw
+    state = cast(dict[str, Any], raw)
+    if not isinstance(state.get("days"), dict):
+        return _empty_search_state()
+    return state
 
 
 def _write_search_state(state: dict[str, Any]) -> None:
@@ -296,13 +299,15 @@ def search_usage_payload(
     for date, provider_row in days.items():
         if not isinstance(provider_row, dict):
             continue
+        typed_providers = cast(dict[str, Any], provider_row)
         in_window = start <= date <= today
-        for name, row in provider_row.items():
+        for name, row in typed_providers.items():
             if not isinstance(row, dict):
                 continue
-            calls = _sint(row.get("calls"))
-            errors = _sint(row.get("errors"))
-            latency = _sint(row.get("latency_ms"))
+            typed_row = cast(dict[str, Any], row)
+            calls = _sint(typed_row.get("calls"))
+            errors = _sint(typed_row.get("errors"))
+            latency = _sint(typed_row.get("latency_ms"))
             for bucket in (
                 providers_all,
                 providers_30d if in_window else None,

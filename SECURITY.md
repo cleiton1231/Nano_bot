@@ -298,6 +298,16 @@ If you suspect a security breach:
    tightens both if it finds them looser, so the keys are not readable by other
    local users — but they are still readable by any process running as you.
    Prefer `${VAR}` env references, or an OS keyring for production.
+
+   *Design decision*: Application-level encryption of `config.json` was
+   evaluated and consciously discarded. In the single-user self-hosted threat
+   model, a symmetric key stored alongside the ciphertext (file or keyring
+   readable by the same UID) is obfuscation, not a security boundary. `${VAR}`
+   environment variable references already keep plaintext secrets out of the
+   file entirely — the config stores only the placeholder and the real value
+   lives in process memory at runtime. Protecting secrets on a powered-off disk
+   is the responsibility of OS-level full-disk encryption (e.g. LUKS), not the
+   application.
 3. **Session Retention Is Opt-In** - Conversation history under
    `~/.nanobot/sessions` is kept indefinitely unless you set
    `security.sessionMaxAgeDays`. When set, sessions untouched for that many days
