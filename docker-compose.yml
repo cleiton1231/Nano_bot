@@ -3,7 +3,7 @@ x-common-config: &common-config
     context: .
     dockerfile: Dockerfile
     args:
-      NANOBOT_CHANNELS: ${NANOBOT_CHANNELS:-whatsapp}
+      NANOBOT_CHANNELS: ${NANOBOT_CHANNELS:-}
   volumes:
     - ~/.nanobot:/home/nanobot/.nanobot
   cap_drop:
