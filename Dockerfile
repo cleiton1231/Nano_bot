@@ -42,8 +42,8 @@ COPY --from=webui-builder /app/nanobot/web/dist/ nanobot/web/dist/
 RUN NANOBOT_SKIP_WEBUI_BUILD=1 uv pip install --python "$VIRTUAL_ENV/bin/python" --no-cache .
 
 # Preinstall selected channel dependencies from their manifests. A comma-separated
-# list keeps the image configurable while preserving WhatsApp in the default image.
-ARG NANOBOT_CHANNELS=whatsapp
+# list keeps the image configurable while defaulting to no channels preinstalled.
+ARG NANOBOT_CHANNELS=
 RUN for channel in $(printf '%s' "$NANOBOT_CHANNELS" | tr ',' ' '); do \
         python -m scripts.install_channel_dependencies "$channel"; \
     done
