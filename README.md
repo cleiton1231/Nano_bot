@@ -29,13 +29,13 @@ Assistente pessoal local, rodando 100% na própria máquina via `llama.cpp`. Bas
 Terminal (CLI)
   └─► /usr/local/bin/nanobot-local (sudo -u nanobot-svc)
         ├─► nanobot (Python venv em /home/nanobot-svc/.venv)
-        │     ├─► Execução via bubblewrap (bwrap nativo)
+        │     ├─► Execução com sandbox configurável (bwrap via tools.exec.sandbox)
         │     └─► Workspace restrito (restrict_to_workspace: true)
         ├─► llama-server (Qwen3.5-9B Q5_K_M em 127.0.0.1:8080/v1)
         └─► llama-server --rerank (Qwen3-Reranker-0.6B em 127.0.0.1:8081)
 ```
 
-- **Isolamento de Processo**: Executado sob o usuário de serviço dedicado `nanobot-svc` (UID 960) com sandbox nativa via `bubblewrap` (`bwrap`), sem Docker e sem daemon persistente (sem systemd/gateway, sem cron de background ou heartbeat). Invocado sob demanda via wrapper `/usr/local/bin/nanobot-local`.
+- **Isolamento de Processo**: Executado sob o usuário de serviço dedicado `nanobot-svc` (UID 960) com suporte a sandbox nativa via `bubblewrap` (`bwrap`), sem Docker e sem daemon persistente (sem systemd/gateway, sem cron de background ou heartbeat). Invocado sob demanda via wrapper `/usr/local/bin/nanobot-local`.
 - **Interface 100% CLI**: WebUI não instalada (`NANOBOT_SKIP_WEBUI_BUILD=1`), eliminando portas de interface gráfica e serviços de rede expostos na máquina.
 - **Configuração Segura**: Arquivo de configuração em `/home/nanobot-svc/.nanobot/config.json` com permissões `chmod 600`, sem chaves em texto puro.
 
@@ -60,7 +60,7 @@ Inferência servida localmente via `llama-server` (Vulkan/RADV, GPU RX 9060 XT 1
 | **Canais de chat externos** | Desativados (`channels: {}`) | 0 adaptadores externos (Telegram/Discord/WhatsApp fora de escopo) |
 | **Web Search & Fetch** | Desativados (`tools.web.enable: false`) | Removidos do registro de ferramentas do agente |
 | **Restrição de Workspace** | Ativa (`restrict_to_workspace: true`) | Bloqueio de leitura, escrita e exec fora da pasta permitida |
-| **Sandbox de Comandos** | Ativa (`bwrap`) | Isolamento de execução de comandos shell |
+| **Sandbox de Comandos** | Configurável (`tools.exec.sandbox: "bwrap"`) | Isolamento de kernel/namespaces (em ativação/validação) |
 | **WebUI** | Não instalada | Build ignorada via `NANOBOT_SKIP_WEBUI_BUILD=1` |
 
 ---

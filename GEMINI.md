@@ -152,7 +152,7 @@ superfície de rede é hipótese a confirmar contra o código-fonte real.
 | Canais de chat           | **Sim**             | Cada canal exige token próprio, sessão de longa duração com serviço externo | Nenhum canal habilitado — fora do escopo (Seção 2)                    |
 | Langfuse (observability) | Sim, se configurado | Opcional, exige chave própria                                               | Confirmar ausência de bloco `langfuse` no config                      |
 | Deploy cloud             | Sim, se usado       | Só relevante se seguir botão de deploy do README upstream                   | Não usar — projeto é local-only                                       |
-| Atualização de versão    | Manual              | `nanobot update` é comando explícito                                        | Rodar manualmente, revisar changelog antes                            |
+| Atualização de versão    | Manual              | Manual via `git pull` + `pip install -e .` (não há comando `nanobot update` no CLI) | Rodar manualmente, revisar changelog/commits antes                    |
 
 ---
 
@@ -218,6 +218,11 @@ Status: **100% VERIFICADA em 2026-08-24** (ver detalhes e evidências no histór
 - [x] `restrict_to_workspace` ativo — testado e confirmado bloqueio real de leitura fora do workspace,
       leitura de `/etc/hosts`, escrita externa, listagem de `/etc`, exec com `working_dir` externo e
       exec referenciando caminhos fora do workspace (`/etc/passwd`).
+- [x] Sandbox de kernel `bwrap` ativa e testada — ativada via `"tools": {"exec": {"sandbox": "bwrap"}}`
+      no `config.json` de produção sob `/home/nanobot-svc/.nanobot/config.json`. `bwrap` isola `mnt` e `user`
+      namespaces (confinamento de filesystem, leitura/escrita fora do workspace bloqueada pelo kernel, bypass
+      de aplicação via base64 neutralizado). `pid` e `net` namespaces permanecem compartilhados com o host
+      — `net` é necessário (acesso a `127.0.0.1:8080/8081`), `pid` não foi isolado e deve ser considerado.
 - [x] `channels: {}` confirmado no config real carregado — `config.channels.model_extra: {}`,
       0 canais/adaptadores externos configurados ou habilitados.
 - [x] `web_search`/`web_fetch` desligados — confirmado no config efetivo com
@@ -254,6 +259,8 @@ Status: **100% VERIFICADA em 2026-08-24** (ver detalhes e evidências no histór
   - Validação de restrição de workspace em ferramentas de filesystem e exec.
   - Correção de divergência do default upstream `tools.web.enable: true` para `false` explícito no `config.json`.
   - Cristalização da regra de identificação de identidade de processo (UID/Path.home/config_path) em scripts de verificação.
+  - Validação e ativação da sandbox de kernel `bwrap` no `config.json` do `nanobot-svc` com neutralização de bypasses em nível de SO.
+  - Decisão de hardening incremental registrada: adicionar `--unshare-pid` ao `wrap_command()` em `sandbox.py`, testar se quebra algo (não esperado, nanobot não depende de ver PIDs do host), e confirmar que a listagem de `/proc` dentro do sandbox passe a exibir unicamente processos da própria sandbox após a alteração.
   - Fechamento de 100% da DoD operacional com execução real sob o usuário `nanobot-svc`.
   - Achados de auditoria colateral de rede/host (fora do escopo do nanobot, mas sanados nesta data):
     - **Firewall do host (Fedora / zona `FedoraWorkstation`)**: faixa indevida `1025-65535/tcp+udp` aberta sem motivo documentado foi removida e reduzida estritamente para as 3 portas que o Syncthing de fato utiliza (`22000/tcp`, `22000/udp`, `21027/udp` — essencial para a sincronização das notas da faculdade, manter liberadas).
