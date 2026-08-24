@@ -58,8 +58,11 @@ mudam a superfície de risco do projeto inteiro, não features incrementais.
   OpenAI-compatible em `127.0.0.1:8080/v1`.
 - Modelos GGUF locais (ver Seção 4).
 - Sandbox de exec via `bubblewrap` (`bwrap`).
-- Isolamento de processo: usuário Linux dedicado (`nanobot-svc`) ou
-  Docker com override de bwrap.
+- Isolamento de processo: usuário Linux dedicado (`nanobot-svc`) + `bwrap` nativo
+  (sem Docker). Processo invocado sob demanda via CLI (`sudo -u nanobot-svc` ou wrapper
+  `nanobot-local`), sem daemon persistente e sem root em nenhum momento.
+  Tarefas em background (cron periódico, heartbeat de 30min e consolidação automática
+  de memória) ficam fora de uso nesta configuração (dependem do modo gateway).
 - `firewalld` como camada adicional de controle de saída, quando
   alguma tool de rede estiver habilitada.
 
@@ -174,8 +177,9 @@ superfície de rede é hipótese a confirmar contra o código-fonte real.
    decisão consciente registrada — não é default, é opt-in.
 3. Nunca aceitar conversão GGUF de reranker/embedding sem teste de
    sanidade (par relevante/irrelevante, scores separados).
-4. Nunca rodar o nanobot com o usuário principal (`cleiton`) em uso
-   contínuo — usuário dedicado ou container.
+4. Nunca rodar o nanobot como o usuário principal (`cleiton`) — invocar
+   exclusivamente como `nanobot-svc` via `sudo -u` ou wrapper `nanobot-local`.
+   Sem Docker, sem container.
 5. `apiKey` de qualquer provider sempre via variável de ambiente,
    nunca em texto puro no `config.json`. `chmod 600` obrigatório.
 6. Toda alegação sobre superfície de rede/segurança neste documento
@@ -199,12 +203,13 @@ Antes de considerar a configuração "pronta pra rodar de fato":
       arquivo — no que o processo efetivamente leu).
 - [ ] `web_search`/`web_fetch` desligados, ou ligados com provider e
       custo/rate limit conscientes e documentados aqui.
-- [ ] Rodando como usuário dedicado ou container — confirmar via `ps`/
-      `whoami` do processo real, não assumir.
+- [ ] Invocação sob demanda como `nanobot-svc` testada com sucesso — confirmar via:
+      `nanobot-local -m "teste"` (ou `sudo -u nanobot-svc ...`) retornando resposta real,
+      output colado.
 - [ ] `config.json` com `chmod 600` confirmado (`ls -l` colado), sem
       chave em texto puro (grep confirmando uso de env var).
-- [ ] WebUI só em `127.0.0.1` — confirmar via `curl` de outro host
-      falhando, não só ler a config.
+- [ ] WebUI: confirmada como não instalada (`NANOBOT_SKIP_WEBUI_BUILD=1`), interface
+      100% CLI local.
 
 ---
 
