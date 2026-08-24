@@ -223,10 +223,10 @@ Status: **100% VERIFICADA em 2026-08-24** (ver detalhes e evidências no histór
       leitura de `/etc/hosts`, escrita externa, listagem de `/etc`, exec com `working_dir` externo e
       exec referenciando caminhos fora do workspace (`/etc/passwd`).
 - [x] Sandbox de kernel `bwrap` ativa e testada — ativada via `"tools": {"exec": {"sandbox": "bwrap"}}`
-      no `config.json` de produção sob `/home/nanobot-svc/.nanobot/config.json`. `bwrap` isola `mnt` e `user`
-      namespaces (confinamento de filesystem, leitura/escrita fora do workspace bloqueada pelo kernel, bypass
-      de aplicação via base64 neutralizado). `pid` e `net` namespaces permanecem compartilhados com o host
-      — `net` é necessário (acesso a `127.0.0.1:8080/8081`), `pid` não foi isolado e deve ser considerado.
+      no `config.json` de produção sob `/home/nanobot-svc/.nanobot/config.json`. `bwrap` isola `mnt`, `user` e
+      `pid` namespaces via `--unshare-pid` (confinamento de filesystem, isolamento de processos em `/proc`
+      com apenas PIDs da própria sandbox visíveis). `net` namespace permanece compartilhado com o host
+      (necessário para acesso a `127.0.0.1:8080/8081`).
 - [x] `channels: {}` confirmado no config real carregado — `config.channels.model_extra: {}`,
       0 canais/adaptadores externos configurados ou habilitados.
 - [x] `web_search`/`web_fetch` desligados — confirmado no config efetivo com
@@ -264,7 +264,7 @@ Status: **100% VERIFICADA em 2026-08-24** (ver detalhes e evidências no histór
   - Correção de divergência do default upstream `tools.web.enable: true` para `false` explícito no `config.json`.
   - Cristalização da regra de identificação de identidade de processo (UID/Path.home/config_path) em scripts de verificação.
   - Validação e ativação da sandbox de kernel `bwrap` no `config.json` do `nanobot-svc` com neutralização de bypasses em nível de SO.
-  - Decisão de hardening incremental registrada: adicionar `--unshare-pid` ao `wrap_command()` em `sandbox.py`, testar se quebra algo (não esperado, nanobot não depende de ver PIDs do host), e confirmar que a listagem de `/proc` dentro do sandbox passe a exibir unicamente processos da própria sandbox após a alteração.
+    - Hardening de PID namespace concluído e verificado em 2026-08-24: adicionado `--unshare-pid` ao `wrap_command()` em `sandbox.py` (commit `1e795ba4`), suíte de testes unitários atualizada (19/19 PASS), isolamento empírico de `/proc` validado sob `nanobot-svc` (apenas PIDs da própria sandbox visíveis) e conectividade de rede com `llama-server` em `127.0.0.1:8080` confirmada via `bwrap`.
   - Fechamento de 100% da DoD operacional com execução real sob o usuário `nanobot-svc`.
   - Achados de auditoria colateral de rede/host (fora do escopo do nanobot, mas sanados nesta data):
     - **Firewall do host (Fedora / zona `FedoraWorkstation`)**: faixa indevida `1025-65535/tcp+udp` aberta sem motivo documentado foi removida e reduzida estritamente para as 3 portas que o Syncthing de fato utiliza (`22000/tcp`, `22000/udp`, `21027/udp` — essencial para a sincronização das notas de estudo, manter liberadas).
