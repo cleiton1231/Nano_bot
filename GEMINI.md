@@ -173,7 +173,9 @@ superfície de rede é hipótese a confirmar contra o código-fonte real.
 
 1. Nunca declarar "seguro" ou "funcionando" sem execução real mostrada
    (curl no `llama-server`, teste de score do reranker, `config.json`
-   efetivo colado — não assumido).
+   efetivo colado — não assumido). "Output esperado" ou qualquer
+   previsão do que um script deveria imprimir NUNCA substitui output
+   real colado do terminal.
 2. Nunca habilitar `tools.web.enable`, canal de chat, ou MCP novo sem
    decisão consciente registrada — não é default, é opt-in.
 3. Nunca aceitar conversão GGUF de reranker/embedding sem teste de
@@ -187,29 +189,45 @@ superfície de rede é hipótese a confirmar contra o código-fonte real.
    precisa ser validada contra `.agent/security.md` e
    `nanobot/security/` reais antes de virar decisão operacional —
    ver Seção 6.
+7. Nenhuma alegação de "config efetivo/carregado" é válida sem o output
+   do MESMO script mostrar explicitamente UID, usuário, `Path.home()` e
+   `get_config_path()` resolvido — não basta rodar `load_config()` e
+   imprimir os valores, tem que provar qual identidade/processo gerou
+   aquele resultado. Isso evita falsos positivos onde um teste roda como
+   `cleiton` lendo `~/.nanobot/config.json` em vez de rodar como
+   `nanobot-svc` lendo `/home/nanobot-svc/.nanobot/config.json`.
+8. O agente NUNCA deve propor adicionar `NOPASSWD` a sudoers (ou qualquer
+   mecanismo que remova autenticação interativa de sudo) como forma de
+   contornar bloqueio de automação — nem como "opção alternativa" ao lado
+   de uma opção manual. Senhas e autenticação de privilégios de sudo nunca
+   devem ser contornadas, enfraquecidas ou desabilitadas para conveniência
+   do assistente.
 
 ---
 
 ## 10. Definição de pronto (DoD) — checklist operacional
 
-Antes de considerar a configuração "pronta pra rodar de fato":
+Status: **100% VERIFICADA em 2026-08-24** (ver detalhes e evidências no histórico da [Seção 12](#12-notas-operacionais)).
 
 - [x] `llama-server` local no ar e testado: `curl -s 127.0.0.1:8080/v1/models`
       confirmado com output real: `{"object":"list","data":[{"id":"Qwen3.5-9B-Q5_K_M.gguf",...}]}`,
       `n_ctx: 16384`, `ftype: "Q5_K - Medium"`, endpoint local respondendo com sucesso.
-- [ ] Reranker testado com par relevante/irrelevante — scores
-      realmente separados (não achatados), output colado.
-- [ ] `restrict_to_workspace` ativo — testar path fora do workspace sendo
-      bloqueado de fato, não só ler a flag no config.
-- [ ] `channels: {}` confirmado no config real carregado (não só no
-      arquivo — no que o processo efetivamente leu).
-- [ ] `web_search`/`web_fetch` desligados — confirmar no config efetivo.
-- [x] Invocação sob demanda como `nanobot-svc` testada com sucesso — confirmado via
-      `nanobot-local -m "teste, responda apenas OK"` retornando `OK` sob `nanobot-svc`.
-- [x] `config.json` com `chmod 600` confirmado (`ls -l` verificado), sem
-      chave em texto puro.
-- [x] WebUI: confirmada como não instalada (`NANOBOT_SKIP_WEBUI_BUILD=1`), interface
-      100% CLI local.
+- [x] Reranker testado com par relevante/irrelevante — `ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF`
+      rodando em `llama-server --rerank` na porta 8081, scores separados com sucesso:
+      relevante (`0.9991523027420044`) vs irrelevante (`1.1015563359251246e-05`), output literal colado.
+- [x] `restrict_to_workspace` ativo — testado e confirmado bloqueio real de leitura fora do workspace,
+      leitura de `/etc/hosts`, escrita externa, listagem de `/etc`, exec com `working_dir` externo e
+      exec referenciando caminhos fora do workspace (`/etc/passwd`).
+- [x] `channels: {}` confirmado no config real carregado — `config.channels.model_extra: {}`,
+      0 canais/adaptadores externos configurados ou habilitados.
+- [x] `web_search`/`web_fetch` desligados — confirmado no config efetivo com
+      `"tools": {"web": {"enable": false}}`, com ausência total de `web_search` e `web_fetch` no `ToolRegistry`.
+- [x] Invocação sob demanda como `nanobot-svc` confirmada via `ps` durante execução real do wrapper:
+      PID rodando `/home/nanobot-svc/.venv/bin/python3 .../nanobot agent -m teste` sob usuário `nanobot-svc`
+      (não `cleiton`, não `root`).
+- [x] `config.json` com `chmod 600` confirmado via `sudo -u nanobot-svc ls -l /home/nanobot-svc/.nanobot/config.json`
+      → `-rw-------. 1 nanobot-svc nanobot-svc`, sem chave em texto puro.
+- [x] WebUI: N/A, confirmada como não instalada (`NANOBOT_SKIP_WEBUI_BUILD=1`), interface 100% CLI local.
 
 ---
 
@@ -231,6 +249,13 @@ Antes de considerar a configuração "pronta pra rodar de fato":
   (`github.com/cleiton1231/xadrez`), que já provou reduzir alegação
   não verificada e cristalizar decisão de bifurcação via `/grill-me`
   antes de `/plan`.
-- Pendência conhecida herdada do `AGENT.md`: nenhuma das validações da
-  Seção 10 foi confirmada com evidência literal ainda neste projeto —
-  isso é o próximo passo real, não decoração de documento.
+- Histórico de auditoria em 2026-08-24:
+  - Validação empírica de separação de scores do reranker `Qwen3-Reranker-0.6B-Q8_0` via `llama-server --rerank`.
+  - Validação de restrição de workspace em ferramentas de filesystem e exec.
+  - Correção de divergência do default upstream `tools.web.enable: true` para `false` explícito no `config.json`.
+  - Cristalização da regra de identificação de identidade de processo (UID/Path.home/config_path) em scripts de verificação.
+  - Fechamento de 100% da DoD operacional com execução real sob o usuário `nanobot-svc`.
+  - Achados de auditoria colateral de rede/host (fora do escopo do nanobot, mas sanados nesta data):
+    - **Firewall do host (Fedora / zona `FedoraWorkstation`)**: faixa indevida `1025-65535/tcp+udp` aberta sem motivo documentado foi removida e reduzida estritamente para as 3 portas que o Syncthing de fato utiliza (`22000/tcp`, `22000/udp`, `21027/udp` — essencial para a sincronização das notas da faculdade, manter liberadas).
+    - **MariaDB**: identificado bindado em `0.0.0.0:3306` por default de pacote (`bind-address` comentado no `.cnf`) e corrigido para `127.0.0.1`.
+    - **Container Docker `nanobot_api`**: resquício de projeto não relacionado (`jarvis-gemini`) foi identificado inativo e completamente removido/confirmado ausente.
