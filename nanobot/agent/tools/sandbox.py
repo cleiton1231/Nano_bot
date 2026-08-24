@@ -81,7 +81,15 @@ def _bwrap(
         "/etc/ld.so.cache",
     ]
 
-    args = ["bwrap", "--new-session", "--die-with-parent", "--setenv", "HOME", str(ws)]
+    args = [
+        "bwrap",
+        "--new-session",
+        "--die-with-parent",
+        "--unshare-pid",
+        "--setenv",
+        "HOME",
+        str(ws),
+    ]
     for p in required:
         args += ["--ro-bind", p, p]
     for p in optional:

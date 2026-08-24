@@ -21,6 +21,7 @@ class TestBwrapBackend:
         assert tokens[0] == "bwrap"
         assert "--new-session" in tokens
         assert "--die-with-parent" in tokens
+        assert "--unshare-pid" in tokens
         assert "--ro-bind" in tokens
         assert "--proc" in tokens
         assert "--dev" in tokens
@@ -28,6 +29,12 @@ class TestBwrapBackend:
 
         sep = tokens.index("--")
         assert tokens[sep + 1:] == ["sh", "-c", "echo hi"]
+
+    def test_unshare_pid_present(self, tmp_path):
+        ws = str(tmp_path / "project")
+        result = wrap_command("bwrap", "ps aux", ws, ws)
+        tokens = _parse(result)
+        assert "--unshare-pid" in tokens
 
     def test_workspace_bind_mounted_rw(self, tmp_path):
         ws = str(tmp_path / "project")
