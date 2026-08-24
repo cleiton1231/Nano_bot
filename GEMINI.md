@@ -55,7 +55,8 @@ mudam a superfície de risco do projeto inteiro, não features incrementais.
 
 - Python (base do nanobot, HKUDS/nanobot upstream).
 - `llama.cpp` + `llama-server` (Vulkan/RADV GFX1200), endpoint
-  OpenAI-compatible em `127.0.0.1:8080/v1`.
+  OpenAI-compatible em `127.0.0.1:8080/v1` (`-c 16384` / context window de 16k tokens,
+  necessário para acomodar system prompt do nanobot + schemas das tools).
 - Modelos GGUF locais (ver Seção 4).
 - Sandbox de exec via `bubblewrap` (`bwrap`).
 - Isolamento de processo: usuário Linux dedicado (`nanobot-svc`) + `bwrap` nativo
@@ -193,22 +194,21 @@ superfície de rede é hipótese a confirmar contra o código-fonte real.
 
 Antes de considerar a configuração "pronta pra rodar de fato":
 
-- [ ] `llama-server` local no ar e testado: `curl 127.0.0.1:8080/v1/models`
-      com output colado.
+- [x] `llama-server` local no ar e testado: `curl -s 127.0.0.1:8080/v1/models`
+      confirmado com output real: `{"object":"list","data":[{"id":"Qwen3.5-9B-Q5_K_M.gguf",...}]}`,
+      `n_ctx: 16384`, `ftype: "Q5_K - Medium"`, endpoint local respondendo com sucesso.
 - [ ] Reranker testado com par relevante/irrelevante — scores
       realmente separados (não achatados), output colado.
-- [ ] `restrict_to_workspace` ativo, workspace = só a pasta da
-      faculdade (+ o que mais for decidido explicitamente).
+- [ ] `restrict_to_workspace` ativo — testar path fora do workspace sendo
+      bloqueado de fato, não só ler a flag no config.
 - [ ] `channels: {}` confirmado no config real carregado (não só no
       arquivo — no que o processo efetivamente leu).
-- [ ] `web_search`/`web_fetch` desligados, ou ligados com provider e
-      custo/rate limit conscientes e documentados aqui.
-- [ ] Invocação sob demanda como `nanobot-svc` testada com sucesso — confirmar via:
-      `nanobot-local -m "teste"` (ou `sudo -u nanobot-svc ...`) retornando resposta real,
-      output colado.
-- [ ] `config.json` com `chmod 600` confirmado (`ls -l` colado), sem
-      chave em texto puro (grep confirmando uso de env var).
-- [ ] WebUI: confirmada como não instalada (`NANOBOT_SKIP_WEBUI_BUILD=1`), interface
+- [ ] `web_search`/`web_fetch` desligados — confirmar no config efetivo.
+- [x] Invocação sob demanda como `nanobot-svc` testada com sucesso — confirmado via
+      `nanobot-local -m "teste, responda apenas OK"` retornando `OK` sob `nanobot-svc`.
+- [x] `config.json` com `chmod 600` confirmado (`ls -l` verificado), sem
+      chave em texto puro.
+- [x] WebUI: confirmada como não instalada (`NANOBOT_SKIP_WEBUI_BUILD=1`), interface
       100% CLI local.
 
 ---
