@@ -16,7 +16,7 @@
 
 Assistente pessoal local, rodando 100% na própria máquina via `llama.cpp`. Baseado no framework open-source [HKUDS/nanobot](https://github.com/HKUDS/nanobot), adaptado para dois usos concretos:
 
-1. 📚 **RAG sobre as notas da faculdade (PUC Minas)** — indexar arquivos `.md` de um workspace dedicado, recuperar trechos relevantes via embedding + reranker, e responder perguntas com contexto real das notas.
+1. 📚 **RAG sobre notas e documentos de estudo** — indexar arquivos `.md` de um workspace dedicado, recuperar trechos relevantes via embedding + reranker, e responder perguntas com contexto real das notas.
 2. 📝 **Utilitário leve de texto do dia a dia** — tarefas pontuais de texto e apoio pessoal, sem virar hub de automação.
 
 > **Privacidade e Isolamento**: Projeto 100% local por design. Sem serviços em nuvem, sem canais de chat externos e com execução isolada sob usuário Linux dedicado. A governança completa do projeto está documentada em [GEMINI.md](./GEMINI.md).

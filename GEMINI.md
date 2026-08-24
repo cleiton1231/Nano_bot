@@ -13,7 +13,7 @@ tools, MCP, memória, canais de chat).
 Assistente pessoal local, rodando 100% na própria máquina via `llama.cpp`,
 com dois usos concretos:
 
-1. **RAG sobre as notas da faculdade (PUC Minas)** — indexar `.md` de um
+1. **RAG sobre notas e documentos de estudo** — indexar `.md` de um
    workspace dedicado, recuperar trechos relevantes via embedding +
    reranker, responder perguntas com contexto real das notas.
 2. **Utilitário leve de texto do dia a dia** — tarefas pontuais, sem
@@ -108,7 +108,7 @@ conversão ruim, trocar de repo.
 
 ```
 nanobot-workspace/
-├── faculdade/              # workspace RAG — só .md das notas PUC Minas
+├── faculdade/              # workspace RAG — só .md das notas de estudo
 └── ~/.nanobot/config.json  # config real, chmod 600, nunca commitado
 ```
 
