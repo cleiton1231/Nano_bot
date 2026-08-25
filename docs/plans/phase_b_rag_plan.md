@@ -7,7 +7,7 @@ Documento técnico de arquitetura, contratos e plano de execução para a Fase B
 ## 1. Goal Description
 
 Implementar um pipeline local, determinístico e auditável de RAG (Retrieval-Augmented Generation) sobre o vault de notas de estudo em Markdown (`nanobot-workspace/faculdade/`), integrando:
-1. **Parser & Chunker de Markdown/Obsidian**: chunking de 1 nota = 1 chunk para notas de até ~1500 tokens, com fallback de particionamento hierárquico por seções (`#`, `##`, `###`) e parágrafos mantendo breadcrumbs de contexto, ignorando arquivos `*.sync-conflict-*.md`.
+1. **Parser & Chunker de Markdown/Obsidian**: chunking de 1 nota = 1 chunk para notas de até ~1500 tokens, com fallback de particionamento hierárquico por seções (`#`, `##`, `###`) e parágrafos mantendo breadcrumbs de contexto, ignorando arquivos de conflito do Syncthing (`*.sync-conflict-*.md`).
 2. **Armazenamento Vetorial & Metadados (`sqlite-vec`)**: banco SQLite local utilizando a extensão C `sqlite-vec` (`vec0`) em modo WAL, armazenando metadados ricos (caminho, pasta/disciplina, título, data, checksum SHA-256) e vetores normalizados de 1024 dimensões.
 3. **Pipeline de Inferência Local**:
    - Geração de embeddings via `llama-server` local em `http://127.0.0.1:8082/v1/embeddings` (`Qwen3-Embedding-0.6B-Q8_0`, porta 8082).
@@ -98,7 +98,7 @@ erDiagram
 - **Estratégia de Chunking**:
   1. Extração resiliente de frontmatter YAML (se malformado, fallback para a primeira linha `# H1` sem abortar o sync).
   2. Sanitização de `[[Wikilinks|Alias]]` para texto plano legível (`Alias`).
-  3. **Filtro Syncthing**: Ignorar explicitamente arquivos de conflito do padrão `*.sync-conflict-*.md`.
+  3. **Filtro Syncthing Obrigatório**: Ignorar explicitamente arquivos que correspondam ao padrão de conflito do Syncthing `*.sync-conflict-*.md` (ex: `nota.sync-conflict-20260824-153000-ABCDEF.md`) usando `fnmatch` / regex (`fnmatch.fnmatch(p.name, "*.sync-conflict-*.md")`), garantindo que cópias de conflito temporárias nunca sejam inseridas na base vetorial.
   4. Se `tokens <= 1500`: **1 nota = 1 chunk** íntegro.
   5. Se `tokens > 1500`: split hierárquico por seções markdown (`#`, `##`, `###`), preservando breadcrumbs (`[Nota: Cálculo 1 > Limites > Teorema do Confronto]`).
   6. Se uma seção individual exceder 1500 tokens: split por parágrafos (`\n\n`) com overlap de ~100 tokens.
@@ -149,7 +149,7 @@ erDiagram
 
 #### [NEW] [nanobot/rag/markdown.py](file:///home/cleiton/opencode/nanobot/nanobot/rag/markdown.py)
 - Extração de frontmatter YAML resiliente.
-- Sanitização de wikilinks e descarte de arquivos `*.sync-conflict-*.md`.
+- Sanitização de wikilinks.
 - Algoritmo de chunking: 1 nota = 1 chunk se <= 1500 tokens, split por headings com breadcrumbs e split adicional por parágrafos com overlap se necessário.
 - Cálculo de SHA-256 e contagem de tokens com tiktoken / `/tokenize`.
 
@@ -166,7 +166,7 @@ erDiagram
 
 #### [NEW] [nanobot/rag/service.py](file:///home/cleiton/opencode/nanobot/nanobot/rag/service.py)
 - Orquestrador de alto nível:
-  - `sync_notes(force: bool = False) -> SyncStats`: varredura incremental de `.md` (ignorando `*.sync-conflict-*.md`), deleção de notas removidas, batch embedding de notas novas/modificadas.
+  - `sync_notes(force: bool = False) -> SyncStats`: varredura incremental de `.md` no vault (`nanobot-workspace/faculdade/`), aplicando filtro explícito de descarte para arquivos que casem com `*.sync-conflict-*.md` (padrão Syncthing: `nota.sync-conflict-YYYYMMDD-HHMMSS-ID.md`), deleção de notas removidas do disco, batch embedding de notas novas/modificadas.
   - `search(query: str, folder: str | None = None, top_k: int | None = None) -> list[RagResult]`: fluxo completo embed -> KNN -> rerank -> threshold.
 
 ---
@@ -207,7 +207,7 @@ erDiagram
    - Teste de extração de frontmatter com campos variados e ausentes.
    - Teste de nota curta (< 1500 tokens) gerando exatamente 1 chunk.
    - Teste de nota longa (> 1500 tokens) particionada por headings com breadcrumbs.
-   - Teste de sanitização de wikilinks e descarte de `*.sync-conflict-*.md`.
+   - Teste de sanitização de wikilinks.
 2. **Vector Store (`tests/rag/test_store.py`)**:
    - Teste de inicialização DDL e carregamento do `sqlite-vec`.
    - Teste de transação atômica de upsert e cascade delete no `vec0`.
@@ -218,6 +218,7 @@ erDiagram
    - Mock de `/v1/rerank` com separação de scores e filtro por threshold.
 4. **End-to-End Service & Tool (`tests/rag/test_service_and_tool.py`)**:
    - Teste do ciclo completo de sync e busca.
+   - **Teste de descarte de conflitos Syncthing**: fixture contendo arquivos normais e arquivos com padrão `*.sync-conflict-*.md` (ex.: `calculo.sync-conflict-20260824-153000-ABCDEF.md`), garantindo que apenas as notas legítimas são indexadas e os arquivos de conflito são ignorados.
    - Validação dos parâmetros e schema da `SearchStudyNotesTool`.
 
 ### Validação Empírica no Host e Conformidade de Ambientes
