@@ -38,8 +38,9 @@ def sanitize_wikilinks(text: str) -> str:
 
 
 def compute_checksum(content: str) -> str:
-    """Compute SHA-256 hex checksum of UTF-8 content."""
-    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+    """Compute SHA-256 hex checksum of UTF-8 content with normalized line endings."""
+    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 @dataclass
