@@ -233,6 +233,25 @@ superfície de rede é hipótese a confirmar contra o código-fonte real.
     resultado do sync deve expor contagem de sucesso/falha e lista de paths falhos,
     com exit code não-zero no CLI se `failed_count > 0`. Nunca reportar sucesso
     silencioso com falha pendente.
+12. O pipeline de recuperação semântica adota arquitetura de dois estágios:
+    KNN vetorial via `search_knn` busca `candidate_k` candidatos brutos (default 30,
+    `ge=1, le=200` no `StudyRagConfig`), seguido por reranking fino via porta 8081
+    que seleciona os `top_k` melhores (default 10). Se o KNN retornar menos candidatos
+    que `top_k` (ex: vault inicial com poucas notas ou filtro restritivo de pasta),
+    o pipeline processa e retorna os candidatos existentes sem erro (resultado parcial válido).
+13. O subsistema de reranking (`RerankerClient` / porta 8081) adota política estrita
+    de *fail-fast*: indisponibilidade da porta 8081, timeout de rede ou erro HTTP
+    dispara `RerankerError` duro, sem fallback silencioso ou degradação não auditada
+    nesta fase de homologação.
+14. O filtro de relevância `score_threshold` é inicializado em `0.0` (permissivo)
+    nesta fase — todos os candidatos rerankeados até `top_k` são retornados ordenados
+    por relevância decrescente, sem descarte cego antes da calibração empírica com notas
+    reais de estudo. O embedding de query é estritamente simétrico ao embedding de documentos
+    (payload de texto puro sem prefixo artificial de instrução).
+15. O retorno da ferramenta `search_study_notes` exposta ao agente segue contrato
+    padronizado em blocos Markdown estruturados: título do documento, caminho/pasta,
+    seção (`heading`), `relevance_score` formatado com 3 casas decimais (`{score:.3f}`)
+    e o conteúdo literal do trecho.
 
 ---
 
@@ -305,5 +324,11 @@ Status: **100% VERIFICADA em 2026-08-24** (ver detalhes e evidências no histór
   - Teste de sanidade do endpoint `http://127.0.0.1:8082/v1/embeddings` confirmado com vetor unitário de 1024 dimensões e separação semântica válida (Cálculo vs Limites: 0.7636 vs Cálculo vs Pão de Queijo: 0.5280).
   - Contrato de sincronização incremental: `sync_notes()` utiliza `rag_documents.checksum` (SHA-256) para decidir reprocessamento incremental — só re-embeda nota se o checksum divergir do salvo no banco. Arquivos `.md` que sumiram do vault disparam `delete_document()` automático (limpando dados relacionais e vetores no `vec0`).
   - Contrato de falha parcial: política *skip-and-log* no sync de notas — falha individual de nota (leitura, decode UTF-8 ou embedding) não aborta o lote, mas expõe métricas de sucesso/falha e paths com erro, resultando em exit code não-zero no CLI se `failed_count > 0`.
+  - Contratos de retrieval e reranker (Fase B):
+    - Dois estágios: KNN com `candidate_k` (default 30) para recall + Reranker (`Qwen3-Reranker-0.6B`) com `top_k` (default 10) para precisão. Retorno parcial sem erro se o pool for menor que `top_k`.
+    - Fail-fast estrito: `RerankerClient` (porta 8081) levanta `RerankerError` se o endpoint falhar/timeout/down. Sem fallback silencioso nesta fase.
+    - Threshold permissivo: `score_threshold` padrão em `0.0` até calibração com notas reais. Embeddings de query simétricos sem prefixo.
+    - Formatação padronizada para tool `search_study_notes`: Markdown com título, caminho, heading, score (3 decimais) e conteúdo.
   - **Débito técnico conhecido (não bloqueante para Fase B)**: Inexistência de wrapper ou systemd units para inicialização simultânea e reproduzível dos 3 processos `llama-server` (hoje orquestrados manualmente via CLI pelo operador).
+
 
