@@ -289,3 +289,9 @@ Status: **100% VERIFICADA em 2026-08-24** (ver detalhes e evidências no histór
     - **MariaDB**: identificado bindado em `0.0.0.0:3306` por default de pacote (`bind-address` comentado no `.cnf`) e corrigido para `127.0.0.1`.
     - **Container Docker `nanobot_api`**: resquício de projeto não relacionado (`jarvis-gemini`) foi identificado inativo e completamente removido/confirmado ausente.
   - Relatório formal e consolidado da auditoria empírica arquivado em [`docs/audits/2026-08-24-empirical-audit.md`](./docs/audits/2026-08-24-empirical-audit.md).
+- Histórico e notas de RAG em 2026-08-25:
+  - Topologia confirmada: 8080 geração (`Qwen3.5-9B`), 8081 reranker (`Qwen3-Reranker-0.6B`), 8082 embedding (`Qwen3-Embedding-0.6B`).
+  - Validação empírica do `Qwen3-Embedding-0.6B-Q8_0` baixado do repo oficial `Qwen/Qwen3-Embedding-0.6B-GGUF` (SHA-256 `06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439` verificado contra LFS OID do Hugging Face).
+  - Teste de sanidade do endpoint `http://127.0.0.1:8082/v1/embeddings` confirmado com vetor unitário de 1024 dimensões e separação semântica válida (Cálculo vs Limites: 0.7636 vs Cálculo vs Pão de Queijo: 0.5280).
+  - **Débito técnico conhecido (não bloqueante para Fase B)**: Inexistência de wrapper ou systemd units para inicialização simultânea e reproduzível dos 3 processos `llama-server` (hoje orquestrados manualmente via CLI pelo operador).
+
