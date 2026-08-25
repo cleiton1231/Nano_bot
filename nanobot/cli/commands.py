@@ -57,6 +57,7 @@ from nanobot.cli.gateway import create_gateway_app  # noqa: E402
 from nanobot.cli.gateway_runtime import _run_gateway  # noqa: E402
 from nanobot.cli.log_control import _set_nanobot_logs  # noqa: E402
 from nanobot.cli.provider import provider_app  # noqa: E402
+from nanobot.cli.rag import rag_app  # noqa: E402
 from nanobot.cli.runtime_config import (  # noqa: E402
     _load_inspection_config,
     _load_runtime_config,
@@ -711,7 +712,9 @@ def status(
 # ============================================================================
 
 app.add_typer(provider_app, name="provider")
+app.add_typer(rag_app, name="rag")
 
 
 if __name__ == "__main__":
     app()
+

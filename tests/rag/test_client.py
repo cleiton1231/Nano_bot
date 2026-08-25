@@ -155,5 +155,184 @@ class TestAsyncEmbeddingClient(unittest.IsolatedAsyncioTestCase):
         client.close()
 
 
+class TestRerankerClient(unittest.TestCase):
+    def setUp(self) -> None:
+        from nanobot.rag.client import RerankerClient, RerankerError
+
+        self.RerankerClient = RerankerClient
+        self.RerankerError = RerankerError
+
+    def test_rerank_success_sync(self) -> None:
+        """Verify successful synchronous reranking parsing index and relevance scores."""
+        client = self.RerankerClient(
+            base_url="http://127.0.0.1:8081/v1/rerank",
+            model="ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF",
+        )
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "results": [
+                {"index": 0, "relevance_score": 0.998, "document": {"text": "Doc 0"}},
+                {"index": 1, "relevance_score": 0.001, "document": {"text": "Doc 1"}},
+            ]
+        }
+
+        with patch.object(client._http_client, "post", return_value=mock_resp) as mock_post:
+            results = client.rerank(
+                query="o que é limite",
+                documents=["Doc 0", "Doc 1"],
+                top_n=2,
+            )
+            self.assertEqual(len(results), 2)
+            self.assertEqual(results[0]["index"], 0)
+            self.assertAlmostEqual(results[0]["relevance_score"], 0.998, places=3)
+            self.assertEqual(results[1]["index"], 1)
+            self.assertAlmostEqual(results[1]["relevance_score"], 0.001, places=3)
+            mock_post.assert_called_once()
+            call_kwargs = mock_post.call_args.kwargs
+            self.assertEqual(call_kwargs["json"]["query"], "o que é limite")
+            self.assertEqual(call_kwargs["json"]["documents"], ["Doc 0", "Doc 1"])
+            self.assertEqual(call_kwargs["json"]["top_n"], 2)
+        client.close()
+
+    def test_rerank_empty_documents_short_circuit(self) -> None:
+        """Verify empty documents list short-circuits without triggering HTTP request."""
+        client = self.RerankerClient()
+        with patch.object(client._http_client, "post") as mock_post:
+            results = client.rerank(query="teste", documents=[])
+            self.assertEqual(results, [])
+            mock_post.assert_not_called()
+        client.close()
+
+    def test_rerank_http_status_error_raises_reranker_error(self) -> None:
+        """Verify HTTP 500 error from rerank server raises RerankerError."""
+        import httpx
+
+        client = self.RerankerClient()
+        req = httpx.Request("POST", "http://test")
+        resp = httpx.Response(500, request=req)
+        with patch.object(client._http_client, "post", side_effect=httpx.HTTPStatusError("500", request=req, response=resp)):
+            with self.assertRaises(self.RerankerError):
+                client.rerank(query="teste", documents=["doc 1"])
+        client.close()
+
+    def test_rerank_network_error_raises_reranker_error(self) -> None:
+        """Verify network connection failure raises RerankerError."""
+        import httpx
+
+        client = self.RerankerClient()
+        with patch.object(client._http_client, "post", side_effect=httpx.ConnectError("Connection refused")):
+            with self.assertRaises(self.RerankerError):
+                client.rerank(query="teste", documents=["doc 1"])
+        client.close()
+
+    def test_rerank_malformed_json_raises_reranker_error(self) -> None:
+        """Verify malformed JSON or missing results list raises RerankerError."""
+        client = self.RerankerClient()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"not_results": []}
+
+        with patch.object(client._http_client, "post", return_value=mock_resp):
+            with self.assertRaises(self.RerankerError):
+                client.rerank(query="teste", documents=["doc 1"])
+        client.close()
+
+    def test_rerank_missing_relevance_score_key_raises_reranker_error(self) -> None:
+        """Verify response items missing 'relevance_score' trigger RerankerError."""
+        client = self.RerankerClient()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "results": [
+                {"index": 0, "document": {"text": "conteúdo sem score"}}
+            ]
+        }
+
+        with patch.object(client._http_client, "post", return_value=mock_resp):
+            with self.assertRaises(self.RerankerError) as ctx:
+                client.rerank(query="teste", documents=["conteúdo"])
+            self.assertIn("relevance_score", str(ctx.exception).lower())
+        client.close()
+
+    def test_rerank_missing_index_key_raises_reranker_error(self) -> None:
+        """Verify response items missing 'index' trigger RerankerError."""
+        client = self.RerankerClient()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "results": [
+                {"relevance_score": 0.95, "document": {"text": "conteúdo sem index"}}
+            ]
+        }
+
+        with patch.object(client._http_client, "post", return_value=mock_resp):
+            with self.assertRaises(self.RerankerError) as ctx:
+                client.rerank(query="teste", documents=["conteúdo"])
+            self.assertIn("index", str(ctx.exception).lower())
+        client.close()
+
+    def test_rerank_boolean_index_raises_reranker_error(self) -> None:
+        """Verify response items with boolean 'index' (e.g. True/False) trigger RerankerError."""
+        client = self.RerankerClient()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "results": [
+                {"index": True, "relevance_score": 0.95}
+            ]
+        }
+
+        with patch.object(client._http_client, "post", return_value=mock_resp):
+            with self.assertRaises(self.RerankerError) as ctx:
+                client.rerank(query="teste", documents=["doc 0", "doc 1"])
+            self.assertIn("integer", str(ctx.exception).lower())
+        client.close()
+
+    def test_rerank_index_out_of_bounds_raises_reranker_error(self) -> None:
+        """Verify item index out of bounds relative to input documents raises RerankerError."""
+        client = self.RerankerClient()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "results": [
+                {"index": 5, "relevance_score": 0.95}  # only 1 document provided
+            ]
+        }
+
+
+        with patch.object(client._http_client, "post", return_value=mock_resp):
+            with self.assertRaises(self.RerankerError) as ctx:
+                client.rerank(query="teste", documents=["doc 0"])
+            self.assertIn("out of bounds", str(ctx.exception).lower())
+        client.close()
+
+
+class TestAsyncRerankerClient(unittest.IsolatedAsyncioTestCase):
+    async def test_async_rerank_success(self) -> None:
+        """Verify asynchronous rerank execution."""
+        from nanobot.rag.client import RerankerClient
+
+        client = RerankerClient()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "results": [
+                {"index": 0, "relevance_score": 0.88},
+            ]
+        }
+
+        async_client = client._get_async_client()
+        with patch.object(async_client, "post", new_callable=AsyncMock, return_value=mock_resp):
+            res = await client.arerank(query="teste", documents=["doc 0"], top_n=1)
+            self.assertEqual(len(res), 1)
+            self.assertEqual(res[0]["index"], 0)
+            self.assertAlmostEqual(res[0]["relevance_score"], 0.88, places=2)
+
+        await client.aclose()
+        client.close()
+
+
 if __name__ == "__main__":
     unittest.main()
+
