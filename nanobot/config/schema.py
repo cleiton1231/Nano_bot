@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from nanobot.agent.tools.self import MyToolConfig
     from nanobot.agent.tools.shell import ExecToolConfig
     from nanobot.agent.tools.web import WebToolsConfig
+    from nanobot.rag.config import StudyRagConfig
 
 
 class ChannelsConfig(Base):
@@ -449,6 +450,10 @@ class ToolsConfig(Base):
     image_generation: ImageGenerationToolConfig = Field(
         default_factory=lambda: _lazy_default("nanobot.agent.tools.image_generation", "ImageGenerationToolConfig"),
     )
+    study_rag: StudyRagConfig = Field(
+        default_factory=lambda: _lazy_default("nanobot.rag.config", "StudyRagConfig"),
+        validation_alias=AliasChoices("studyRag", "study_rag", "rag"),
+    )
     restrict_to_workspace: bool = False  # policy intent: keep tool access inside workspace when possible
     webui_allow_local_service_access: bool = Field(
         default=True,
@@ -732,6 +737,7 @@ def _resolve_tool_config_refs() -> None:
     from nanobot.agent.tools.self import MyToolConfig
     from nanobot.agent.tools.shell import ExecToolConfig
     from nanobot.agent.tools.web import WebFetchConfig, WebSearchConfig, WebToolsConfig
+    from nanobot.rag.config import StudyRagConfig
 
     # Re-export into this module's namespace
     mod = sys.modules[__name__]
@@ -743,6 +749,7 @@ def _resolve_tool_config_refs() -> None:
     mod.WebFetchConfig = WebFetchConfig  # type: ignore[attr-defined]
     mod.MyToolConfig = MyToolConfig  # type: ignore[attr-defined]
     mod.ImageGenerationToolConfig = ImageGenerationToolConfig  # type: ignore[attr-defined]
+    mod.StudyRagConfig = StudyRagConfig  # type: ignore[attr-defined]
 
     ToolsConfig.model_rebuild()
     Config.model_rebuild()
