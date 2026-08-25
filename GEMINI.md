@@ -213,15 +213,11 @@ superfície de rede é hipótese a confirmar contra o código-fonte real.
    de uma opção manual. Senhas e autenticação de privilégios de sudo nunca
    devem ser contornadas, enfraquecidas ou desabilitadas para conveniência
    do assistente.
-9. Scripts de teste, auditoria e sincronização gerados pelo agente
-   devem obrigatoriamente conter `set -euo pipefail` (ou validação
-   estrita equivalente), checar exit codes de cada etapa explicitamente
-   (`$? -eq 0`) e utilizar diretórios de log isolados por UID
-   (`/tmp/diag_${EUID}/` ou `mktemp -d`). É terminantemente proibido emitir
-   mensagens afirmativas de sucesso sem validação real de exit code, e é
-   proibido assumir leitura direta do usuário de serviço dentro do `/home`
-   de `cleiton` sem passar por staging intermediário (ex.: `/tmp` com
-   `chmod 644` criado pelo dono da origem).
+9. Scripts de verificação/sincronização devem checar exit code
+   explicitamente em cada etapa crítica (cp, diff, grep — `$? -eq 0` ou
+   `set -euo pipefail`) antes de reportar sucesso. Nunca aceitar mensagem
+   de "sucesso" de script sem confirmação independente (ex: grep direto
+   no arquivo final, rodado à parte).
 
 ---
 
@@ -280,9 +276,8 @@ Status: **100% VERIFICADA em 2026-08-24** (ver detalhes e evidências no histór
   - Correção de divergência do default upstream `tools.web.enable: true` para `false` explícito no `config.json`.
   - Cristalização da regra de identificação de identidade de processo (UID/Path.home/config_path) em scripts de verificação.
     - Hardening de PID namespace e incidente de sincronização concluídos em 2026-08-24:
-      - **Causa raiz da divergência**: O ambiente de produção sob `nanobot-svc` utilizava um pacote estático instalado em seu `site-packages` (`/home/nanobot-svc/.venv/lib64/python3.14/site-packages/nanobot/`), e não um *editable install* vinculado ao checkout de dev (`/home/cleiton/opencode/nanobot`). Por isso, a alteração inicial de `--unshare-pid` feita em dev não surtiu efeito imediato no `nanobot-svc`, revelando centenas de PIDs nos primeiros testes.
-      - **Falha de script detectada e corrigida**: O primeiro script de sincronização tentou copiar diretamente de `/home/cleiton/` sob `nanobot-svc` (falhando por `Permission denied` devido a `0700` no home do dev) e emitiu falso positivo de sucesso por ausência de `set -e`. O script foi corrigido para exigir `set -euo pipefail`, isolamento de logs temporários por UID (`/tmp/bwrap_diag_${EUID}/`) e fluxo de staging neutro (`/tmp/sandbox_for_nanobot_svc.py` com `chmod 644`).
-      - **Resolução e commits**: Diff verificado linha por linha, arquivo sincronizado em produção, presença de `--unshare-pid` atestada via `grep` no `site-packages` real, suíte unitária aprovada (19/19 PASS) e isolamento de `/proc` (PIDs restritos) e rede (`llama-server 127.0.0.1:8080`) 100% verificados sob `nanobot-svc` (commits `1e795ba4` e `9a62623f`).
+      - Incidente de sincronização durante hardening `--unshare-pid`: script de sync imprimiu "Arquivo sincronizado com sucesso!" mesmo após `cp` falhar com "Permissão negada" — origem da regra 9.
+      - Resolução com presença de `--unshare-pid` atestada via `grep` no `site-packages` real, suíte unitária aprovada (19/19 PASS) e isolamento de `/proc` (PIDs restritos) e rede (`llama-server 127.0.0.1:8080`) 100% verificados sob `nanobot-svc` (commits `1e795ba4` e `9a62623f`).
   - Fechamento de 100% da DoD operacional com execução real sob o usuário `nanobot-svc`.
   - Achados de auditoria colateral de rede/host (fora do escopo do nanobot, mas sanados nesta data):
     - **Firewall do host (Fedora / zona `FedoraWorkstation`)**: faixa indevida `1025-65535/tcp+udp` aberta sem motivo documentado foi removida e reduzida estritamente para as 3 portas que o Syncthing de fato utiliza (`22000/tcp`, `22000/udp`, `21027/udp` — essencial para a sincronização das notas de estudo, manter liberadas).
