@@ -44,6 +44,10 @@ consciente, nunca default silencioso.
 - Deploy em nuvem/Render — projeto é local-only por design.
 - WebUI exposta na LAN — bind sempre em `127.0.0.1`; acesso remoto é
   via túnel SSH, nunca porta aberta.
+- Escrita/edição/deleção no vault de notas de estudo (`faculdade/`) — o nanobot
+  possui acesso **SOMENTE LEITURA** à pasta sincronizada pelo Syncthing.
+  Write-back de qualquer tipo (anotação, resumo, tag) exige `/grill-me` próprio
+  antes de entrar em escopo.
 
 Se alguma dessas entrar no roadmap no futuro, precisa passar por
 `/grill-me` antes de qualquer plano — são decisões de bifurcação que
@@ -218,6 +222,16 @@ superfície de rede é hipótese a confirmar contra o código-fonte real.
    `set -euo pipefail`) antes de reportar sucesso. Nunca aceitar mensagem
    de "sucesso" de script sem confirmação independente (ex: grep direto
    no arquivo final, rodado à parte).
+10. O nanobot tem acesso estritamente SOMENTE LEITURA à pasta de notas
+    (`faculdade/`) sincronizada pelo Syncthing. Nenhuma escrita, edição ou
+    deleção de arquivos `.md` do vault é permitida. Write-back de qualquer
+    tipo (anotação, resumo, tag) exige `/grill-me` próprio antes de entrar
+    em escopo.
+11. O pipeline de sincronização (`sync_notes()`) segue política *skip-and-log*:
+    falha de embedding em uma nota (rede, timeout, resposta malformada) não
+    aborta o lote, mas o resultado do sync deve expor contagem de sucesso/falha
+    e lista de paths falhos, com exit code não-zero no CLI se `failed_count > 0`.
+    Nunca reportar sucesso silencioso com falha pendente.
 
 ---
 
@@ -288,5 +302,7 @@ Status: **100% VERIFICADA em 2026-08-24** (ver detalhes e evidências no histór
   - Topologia confirmada: 8080 geração (`Qwen3.5-9B`), 8081 reranker (`Qwen3-Reranker-0.6B`), 8082 embedding (`Qwen3-Embedding-0.6B`).
   - Validação empírica do `Qwen3-Embedding-0.6B-Q8_0` baixado do repo oficial `Qwen/Qwen3-Embedding-0.6B-GGUF` (SHA-256 `06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439` verificado contra LFS OID do Hugging Face).
   - Teste de sanidade do endpoint `http://127.0.0.1:8082/v1/embeddings` confirmado com vetor unitário de 1024 dimensões e separação semântica válida (Cálculo vs Limites: 0.7636 vs Cálculo vs Pão de Queijo: 0.5280).
+  - Contrato de sincronização incremental: `sync_notes()` utiliza `rag_documents.checksum` (SHA-256) para decidir reprocessamento incremental — só re-embeda nota se o checksum divergir do salvo no banco. Arquivos `.md` que sumiram do vault disparam `delete_document()` automático (limpando dados relacionais e vetores no `vec0`).
+  - Contrato de falha parcial: política *skip-and-log* no sync de notas — falha de embedding individual não aborta o lote, mas expõe métricas de sucesso/falha e paths com erro, resultando em exit code não-zero no CLI se `failed_count > 0`.
   - **Débito técnico conhecido (não bloqueante para Fase B)**: Inexistência de wrapper ou systemd units para inicialização simultânea e reproduzível dos 3 processos `llama-server` (hoje orquestrados manualmente via CLI pelo operador).
 
