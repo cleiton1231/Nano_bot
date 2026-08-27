@@ -330,5 +330,8 @@ Status: **100% VERIFICADA em 2026-08-24** (ver detalhes e evidências no histór
     - Threshold permissivo: `score_threshold` padrão em `0.0` até calibração com notas reais. Embeddings de query simétricos sem prefixo.
     - Formatação padronizada para tool `search_study_notes`: Markdown com título, caminho, heading, score (3 decimais) e conteúdo.
   - **Débito técnico conhecido (não bloqueante para Fase B)**: Inexistência de wrapper ou systemd units para inicialização simultânea e reproduzível dos 3 processos `llama-server` (hoje orquestrados manualmente via CLI pelo operador).
+- Histórico de automação e subagentes Antigravity em 2026-08-26:
+  - **Aninhamento de subagentes customizados**: subagentes customizados (`.md`, `mainAgent: true`) **NÃO** devem invocar outro subagente via `invoke_subagent` no seu system prompt. O aninhamento de 2 níveis perde silenciosamente o retorno da tool call no runtime. Padrão operacional obrigatório: orquestração externa sequencial pela sessão principal (`sessão -> plan`, depois `sessão -> plan-critic`), conforme documentado em [`.agent/gotchas.md`](./.agent/gotchas.md).
+  - **Débito técnico em transclusões Obsidian (`_IMAGE_EMBED_RE`)**: `_IMAGE_EMBED_RE` em `markdown.py` remove qualquer transclusão Obsidian `![[...]]` como se fosse imagem, incluindo transclusões de notas markdown (ex: `![[Resumo Cálculo]]`), que são silenciosamente descartadas do texto indexado pelo RAG em vez de expandidas/preservadas. Achado via `systematic-debugging-agent` em 2026-08-26. Se o vault usar transclusão de notas com frequência, isso é perda de conteúdo relevante — avaliar se vale restringir a regex a extensões de mídia (`\.(png|jpe?g|gif|webp|svg|bmp|pdf)`) antes de expandir Fase B.
 
 

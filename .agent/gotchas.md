@@ -38,3 +38,14 @@ Built-in skills live in `nanobot/skills/` (markdown + YAML frontmatter format). 
 ## Atomic Session Writes
 
 `agent/memory.py` writes `history.jsonl` atomically (temp file + fsync + rename + directory fsync). This guarantees durability across crashes. Do not replace this with a plain `open(..., "w")` write.
+
+## Antigravity CLI — Aninhamento de Subagentes Customizados
+
+Subagentes customizados (`.md`, `mainAgent: true`) **NÃO** devem tentar invocar outro subagente via `invoke_subagent` de dentro do próprio system prompt. Aninhamento de 2 níveis (`sessão` → `agenteA` → `agenteB`) perde o retorno da chamada silenciosamente — o agente conclui que a tool falhou e segue sem esperar. Confirmado empiricamente em 2026-08-26 com os agentes `plan`/`plan-critic`.
+
+**Padrão correto**: orquestração externa — a sessão principal invoca cada agente separadamente em sequência (1 nível de aninhamento por chamada), nunca deixa um agente customizado encadear outro sozinho.
+
+## Transclusões Obsidian e `_IMAGE_EMBED_RE`
+
+`_IMAGE_EMBED_RE` em `nanobot/rag/markdown.py` remove qualquer transclusão Obsidian `![[...]]` como se fosse imagem, incluindo transclusões de notas markdown (ex: `![[Resumo Cálculo]]`), que são silenciosamente descartadas do texto indexado pelo RAG em vez de expandidas/preservadas. Achado via `systematic-debugging-agent` em 2026-08-26. Se o vault usar transclusão de notas com frequência, isso é perda de conteúdo relevante — avaliar se vale restringir a regex a extensões de mídia (`\.(png|jpe?g|gif|webp|svg|bmp|pdf)`) antes de expandir Fase B.
+
