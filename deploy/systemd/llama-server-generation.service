@@ -1,0 +1,24 @@
+[Unit]
+Description=llama-server — generation (nanobot local stack, port 8080)
+After=network.target
+Wants=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=nanobot-svc
+Group=nanobot-svc
+WorkingDirectory=/home/nanobot-svc
+ExecStart=/usr/local/bin/llama-server \
+  --model /home/cleiton/local/models/qwen3.5-9b-q5/Qwen3.5-9B-Q5_K_M.gguf \
+  --host 127.0.0.1 \
+  --port 8080 \
+  --ctx-size 16384
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

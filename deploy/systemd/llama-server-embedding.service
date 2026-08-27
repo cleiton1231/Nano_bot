@@ -1,0 +1,26 @@
+[Unit]
+Description=llama-server — embedding (nanobot local stack, port 8082)
+After=network.target
+Wants=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=nanobot-svc
+Group=nanobot-svc
+WorkingDirectory=/home/nanobot-svc
+ExecStart=/usr/local/bin/llama-server \
+  --model /home/cleiton/local/models/qwen3-embedding-0.6b-q8/Qwen3-Embedding-0.6B-Q8_0.gguf \
+  --embedding \
+  --pooling last \
+  --host 127.0.0.1 \
+  --port 8082 \
+  --ctx-size 8192
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
