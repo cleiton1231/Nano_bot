@@ -13,6 +13,7 @@ from nanobot.rag.client import EmbeddingClient, EmbeddingError, RerankerClient, 
 from nanobot.rag.config import StudyRagConfig
 from nanobot.rag.retrieval import RetrievalPipeline
 from nanobot.rag.store import DimensionMismatchError, RagStore
+from nanobot.rag.sync import SyncPipeline
 
 console = Console()
 rag_app = typer.Typer(
@@ -92,5 +93,65 @@ def search_notes(
         raise typer.Exit(1)
     except Exception as err:
         console.print(f"[red]Erro inesperado na busca RAG:[/red] {err}")
+        raise typer.Exit(1)
+
+
+@rag_app.command("sync", help="Incrementally sync study notes vault into the vector store.")
+def sync_notes_cmd(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-F",
+        help="Re-embed all notes even if checksum matches the database.",
+    ),
+    config_file: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        help="Custom configuration file path.",
+    ),
+) -> None:
+    """Synchronize the read-only study notes vault into the local vector store."""
+    config = load_config(config_file)
+    rag_config: StudyRagConfig = config.tools.study_rag
+
+    try:
+        with RagStore(
+            db_path=rag_config.db_path,
+            embedding_dims=rag_config.embedding_dims,
+        ) as store, EmbeddingClient(
+            base_url=rag_config.embedding_url,
+            model=rag_config.embedding_model,
+            dims=rag_config.embedding_dims,
+            timeout=rag_config.embedding_timeout,
+        ) as embed_client:
+            pipeline = SyncPipeline(store=store, client=embed_client)
+            stats = pipeline.sync_notes(notes_dir=rag_config.notes_dir, force=force)
+
+            # Saída operacional: todos os campos de SyncStats, incluindo
+            # total_chunks e duration_seconds (métricas úteis ao operador local).
+            console.print(f"Arquivos escaneados: {stats.scanned_files}")
+            console.print(f"Documentos sincronizados: {stats.synced_docs}")
+            console.print(f"Documentos inalterados: {stats.unchanged_docs}")
+            console.print(f"Documentos removidos: {stats.deleted_docs}")
+            console.print(f"Documentos com falha: {stats.failed_docs}")
+            console.print(f"Chunks indexados: {stats.total_chunks}")
+            console.print(f"Duração: {stats.duration_seconds}s")
+
+            for path in stats.failed_paths:
+                console.print(path)
+
+            if not stats.is_success:
+                raise typer.Exit(1)
+    except FileNotFoundError as err:
+        console.print(f"[red]{err}[/red]")
+        raise typer.Exit(1)
+    except EmbeddingError as err:
+        console.print(f"[red]Erro no subsistema de embedding (porta 8082):[/red] {err}")
+        raise typer.Exit(1)
+    except DimensionMismatchError as err:
+        console.print(f"[red]Erro de dimensão no banco vetorial:[/red] {err}")
+        raise typer.Exit(1)
+    except Exception as err:
+        console.print(f"[red]Erro inesperado na sincronização RAG:[/red] {err}")
         raise typer.Exit(1)
 
