@@ -1,0 +1,51 @@
+# Add directories or file patterns to ignore during indexing (e.g. foo/ or *.csv)
+# --- Segredos e credenciais ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+*.ppk
+.ssh/
+.aws/
+.gnupg/
+secrets/
+credentials.json
+*token*.json
+*apikey*
+.netrc
+
+# --- Password managers / apps sensíveis ---
+*.kdbx
+bitwarden_export*
+proton*.json
+
+# --- Build / deps (não precisa indexar, só pesa) ---
+node_modules/
+target/
+build/
+dist/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# --- Modelos locais / binários pesados ---
+*.gguf
+*.safetensors
+*.bin
+local/models/
+~/local/models/
+
+# --- Git interno ---
+.git/
+
+# --- Logs e caches ---
+*.log
+.cache/
+.DS_Store

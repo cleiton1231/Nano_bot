@@ -77,7 +77,9 @@ Desktop.ini
 
 # Editors & IDEs (local workspace / user settings)
 .vscode/
-.cursor/
+.cursor/*
+!.cursor/rules/
+!.cursor/skills/
 .idea/
 .fleet/
 *.code-workspace
