@@ -178,6 +178,7 @@ superfície de rede é hipótese a confirmar contra o código-fonte real.
 | Langfuse (observability) | Sim, se configurado | Opcional, exige chave própria                                               | Confirmar ausência de bloco `langfuse` no config                      |
 | Deploy cloud             | Sim, se usado       | Só relevante se seguir botão de deploy do README upstream                   | Não usar — projeto é local-only                                       |
 | Atualização de versão    | Manual              | Manual via `git pull` + `pip install -e .` (não há comando `nanobot update` no CLI) | Rodar manualmente, revisar changelog/commits antes                    |
+| RAG vault (`studyRag.notesDir`) | Não (leitura local) | Lê paths arbitrários do config; módulo `nanobot/rag/` **não** consulta `tools.restrict_to_workspace` | Barreira real: ACL POSIX no host + path explícito no config; sem guard em app no RAG |
 
 ---
 
@@ -236,6 +237,9 @@ Aprendizados locais: `.cursor/rules/nanobot-learnings.mdc`.
    desenvolvimento (`/home/cleiton/opencode/nanobot`), enquanto a produção
    sob `nanobot-svc` está lendo `/home/nanobot-svc/.nanobot/config.json` e
    importando de um `site-packages` copiado/separado.
+   Comandos sob `sudo -u nanobot-svc`, o cwd do processo chamador é preservado —
+   não reseta para o home de `nanobot-svc`. Evidência Regra 7 inválida se o cwd
+   está no checkout dev: usar `cd /tmp &&` antes do comando de verificação.
 8. O agente NUNCA deve propor adicionar `NOPASSWD` a sudoers (ou qualquer
    mecanismo que remova autenticação interativa de sudo) como forma de
    contornar bloqueio de automação — nem como "opção alternativa" ao lado
@@ -277,6 +281,19 @@ Aprendizados locais: `.cursor/rules/nanobot-learnings.mdc`.
     padronizado em blocos Markdown estruturados: título do documento, caminho/pasta,
     seção (`heading`), `relevance_score` formatado com 3 casas decimais (`{score:.3f}`)
     e o conteúdo literal do trecho.
+16. O subsistema RAG (`nanobot/rag/`) não consulta
+    `tools.restrict_to_workspace`. Esse guard protege apenas tools de
+    exec/filesystem — não o pipeline de sync/search do RAG. A única
+    barreira contra `study_rag.notes_dir` escapar do escopo pretendido
+    é ACL POSIX aplicada manualmente no host sobre o path configurado.
+    Isso é aceitável enquanto `notes_dir` for um subpath estreito e
+    auditado (ex: `Puc/2026-2`), mas não escala sozinho: se
+    `notes_dir` for ampliado (ex: para a raiz do vault) sem
+    reaplicar/reconferir a ACL no novo escopo, ou se o path contiver
+    um symlink que escape da árvore autorizada, não há segunda camada
+    de defesa em nível de aplicação. Qualquer mudança de `notes_dir`
+    deve reconfirmar a ACL do novo path antes do próximo sync — não
+    assumir herança do escopo anterior.
 
 ---
 

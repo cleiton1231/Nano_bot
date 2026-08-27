@@ -16,3 +16,27 @@ Não editar `GEMINI.md` por este canal.
 **Contexto:** Proposta de dep para cachear respostas dos llama-server/embedding. `dependency-audit` REPROVOU: PyPI 0.13.0 (2023-09), repo arquivado (2023-10), constraints (`anyio~=3`, `attrs<24`) conflitam com `httpx>=0.28` do nanobot; `EmbeddingClient` usa POST JSON — cache HTTP típico não cobre.
 
 **Evidência:** Veredito REPROVADO na sessão Cursor 2026-08-27; OSV sem CVE; origem https://pypi.org/project/httpx-cache/
+
+## 2026-08-27 — `sudo -u nanobot-svc` preserva cwd do chamador
+
+**Regra:** Todo comando `sudo -u nanobot-svc` de verificação ou evidência (Regra 7) deve rodar com `cd /tmp &&` (ou cwd neutro fora de qualquer checkout dev) antes do comando real.
+
+**Contexto:** `sudo -u nanobot-svc` não reseta o cwd para o home do usuário alvo. Com cwd no checkout dev (`/home/cleiton/opencode/nanobot`), o import de `nanobot` pode resolver via `sys.path` ao checkout dev mesmo com `sys.executable` e `sys.prefix` corretos no venv de produção — invalidando silenciosamente blocos de evidência Regra 7.
+
+**Evidência:** Sessão promoção RAG produção nanobot-svc; plano `promover_rag_producao_a02960cb.plan.md`.
+
+## 2026-08-27 — RAG não consulta `restrict_to_workspace`
+
+**Regra:** Não assumir que `tools.restrictToWorkspace` protege o pipeline RAG (`nanobot/rag/`). A barreira real contra `studyRag.notesDir` fora do escopo é ACL POSIX no host + path explícito no config — não há guard em nível de aplicação no módulo RAG.
+
+**Contexto:** `grep` vazio em `nanobot/rag/` (sync.py, config.py, etc.) no pacote instalado: o subsistema não referencia `restrict_to_workspace`. O guard genérico de workspace cobre tools de exec/filesystem, não leitura do vault RAG.
+
+**Evidência:** Sessão promoção RAG produção nanobot-svc, 2026-08-27; Task 2 (ACL manual no subpath `Puc/2026-2`).
+
+## 2026-08-27 — Glob `ls <path>*` sob `sudo -u` em zsh
+
+**Regra:** Se `ls <path>*` sob `sudo -u <outro_user>` falha com "arquivo ou diretório inexistente" em zsh, testar `ls <path>` sem glob antes de escalar como bug ou dado ausente.
+
+**Contexto:** Em zsh, glob não expandido (ex.: sem `-wal`/`-shm` ao lado de `rag.db`) pode falhar mesmo quando o arquivo base existe — não indica ausência do dado.
+
+**Evidência:** Sessão promoção RAG produção nanobot-svc, 2026-08-27; Task 5 Step 4.
