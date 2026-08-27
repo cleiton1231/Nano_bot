@@ -1,6 +1,8 @@
 """Unit test suite for nanobot rag CLI commands."""
 
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
@@ -205,6 +207,50 @@ class TestRagCli(unittest.TestCase):
 
             self.assertEqual(result.exit_code, 1, msg=result.output)
             self.assertIn("vault directory not found", result.output)
+
+
+class TestRagSyncCliIntegration(unittest.TestCase):
+    def setUp(self) -> None:
+        self.runner = CliRunner()
+
+    def _mock_rag_config(self, notes_dir: str, db_path: str = ":memory:") -> MagicMock:
+        mock_config = MagicMock()
+        rag_config = mock_config.tools.study_rag
+        rag_config.notes_dir = notes_dir
+        rag_config.db_path = db_path
+        rag_config.embedding_dims = 4
+        rag_config.embedding_url = "http://127.0.0.1:8082/v1/embeddings"
+        rag_config.embedding_model = "Qwen3-Embedding-0.6B-Q8_0.gguf"
+        rag_config.embedding_timeout = 30.0
+        return mock_config
+
+    def test_rag_sync_cli_initializes_schema_on_fresh_memory_db(self) -> None:
+        """First sync must init_db on an uninitialized store and complete without SQL errors."""
+        with tempfile.TemporaryDirectory(prefix="rag_sync_cli_int_") as vault_dir:
+            vault_path = Path(vault_dir)
+            (vault_path / "intro.md").write_text(
+                "# Introdução\n\nConteúdo de sanidade para sync CLI.",
+                encoding="utf-8",
+            )
+
+            mock_embed = MagicMock()
+            mock_embed.__enter__.return_value = mock_embed
+            mock_embed.__exit__.return_value = False
+            mock_embed.embed_chunks.side_effect = (
+                lambda chunks: [(chunk, [0.1, 0.2, 0.3, 0.4]) for chunk in chunks]
+            )
+
+            with patch(
+                "nanobot.cli.rag.load_config",
+                return_value=self._mock_rag_config(notes_dir=vault_dir),
+            ), patch("nanobot.cli.rag.EmbeddingClient", return_value=mock_embed):
+                result = self.runner.invoke(app, ["rag", "sync"])
+
+            self.assertEqual(result.exit_code, 0, msg=result.output)
+            self.assertIn("Arquivos escaneados: 1", result.output)
+            self.assertIn("Documentos sincronizados: 1", result.output)
+            self.assertIn("Documentos com falha: 0", result.output)
+            self.assertNotIn("rag_documents", result.output)
 
 
 if __name__ == "__main__":

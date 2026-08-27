@@ -124,6 +124,7 @@ def sync_notes_cmd(
             dims=rag_config.embedding_dims,
             timeout=rag_config.embedding_timeout,
         ) as embed_client:
+            store.init_db()
             pipeline = SyncPipeline(store=store, client=embed_client)
             stats = pipeline.sync_notes(notes_dir=rag_config.notes_dir, force=force)
 
