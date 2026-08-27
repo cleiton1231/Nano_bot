@@ -82,6 +82,10 @@ risco do projeto inteiro, não features incrementais.
   de memória) ficam fora de uso nesta configuração (dependem do modo gateway).
 - `firewalld` como camada adicional de controle de saída, quando
   alguma tool de rede estiver habilitada.
+- Invocação do CLI neste projeto: `uv run nanobot ...` ou
+  `.venv/bin/nanobot ...` — nunca `~/.local/bin/nanobot` diretamente
+  (shebang aponta para Python do sistema, sem deps do `.venv` como
+  `sqlite-vec`).
 
 ---
 
@@ -315,6 +319,9 @@ Status: **100% VERIFICADA em 2026-08-24** (ver detalhes e evidências no histór
 - Nunca commitar `~/.nanobot/config.json` real (tem estrutura de
   chave, mesmo sem valor de chave em texto puro — path de exemplo
   vai num `config.example.json` versionado, não o real).
+- Invocação do CLI: `uv run nanobot ...` ou `.venv/bin/nanobot ...`;
+  nunca `~/.local/bin/nanobot` diretamente (Python do sistema, sem
+  `.venv`).
 
 ---
 
