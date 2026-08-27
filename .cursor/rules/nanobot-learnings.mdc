@@ -1,0 +1,18 @@
+---
+description: Aprendizados cristalizados do projeto nanobot (append-only via consolidate-learning)
+alwaysApply: true
+---
+
+# Nanobot learnings
+
+Regras acumuladas a partir de decisões/gotchas fechados em sessão.
+**Append-only** — novas entradas só via skill `consolidate-learning`, com data e aprovação explícita.
+Não editar `GEMINI.md` por este canal.
+
+## 2026-08-27 — Não adicionar httpx-cache para embedding
+
+**Regra:** Nunca adicionar `httpx-cache` (nem equivalente HTTP-cache genérico) para “economizar” chamadas ao embedding client. Cache de embeddings, se necessário, deve ser application-level (hash do texto/batch), não cache HTTP de POST.
+
+**Contexto:** Proposta de dep para cachear respostas dos llama-server/embedding. `dependency-audit` REPROVOU: PyPI 0.13.0 (2023-09), repo arquivado (2023-10), constraints (`anyio~=3`, `attrs<24`) conflitam com `httpx>=0.28` do nanobot; `EmbeddingClient` usa POST JSON — cache HTTP típico não cobre.
+
+**Evidência:** Veredito REPROVADO na sessão Cursor 2026-08-27; OSV sem CVE; origem https://pypi.org/project/httpx-cache/
