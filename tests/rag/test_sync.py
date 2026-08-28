@@ -234,6 +234,23 @@ class TestSyncPipeline(unittest.TestCase):
             for chunk in loaded.chunks:
                 self.assertNotIn("MARKER_OUTSIDE_DATA_123", chunk.content)
 
+    def test_sync_symlink_inside_vault_is_indexed(self) -> None:
+        """Symlink cujo destino resolve dentro de notes_dir continua elegível."""
+        real = self.vault_dir / "real_note.md"
+        real.write_text("# Nota Real\nMARKER_INTERNAL_OK", encoding="utf-8")
+        alias = self.vault_dir / "alias_note.md"
+        alias.symlink_to(real)
+
+        pipeline = self.SyncPipeline(store=self.store, client=self.mock_client, parser=self.parser)
+        stats = pipeline.sync_notes(self.vault_dir)
+
+        self.assertTrue(stats.is_success)
+        self.assertEqual(stats.scanned_files, 2)  # real + alias (ambos resolve dentro)
+        self.assertEqual(stats.synced_docs, 2)
+        alias_doc = self.store.get_document_by_path("alias_note.md")
+        self.assertIsNotNone(alias_doc)
+        self.assertIn("MARKER_INTERNAL_OK", alias_doc.chunks[0].content)
+
 
 if __name__ == "__main__":
     unittest.main()
