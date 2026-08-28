@@ -1,0 +1,340 @@
+#!/usr/bin/env bash
+# nanobot-local — invoke nanobot as nanobot-svc with on-demand llama-server lifecycle.
+set -euo pipefail
+
+readonly NANOBOT_BIN="/home/nanobot-svc/.venv/bin/nanobot"
+readonly READY_TIMEOUT_SEC=120
+readonly READY_POLL_INTERVAL=0.5
+readonly READY_URL_PATH="/v1/models"
+
+readonly UNIT_GENERATION="llama-server-generation.service"
+readonly UNIT_RERANKER="llama-server-reranker.service"
+readonly UNIT_EMBEDDING="llama-server-embedding.service"
+
+readonly ALL_UNITS=(
+  "$UNIT_GENERATION"
+  "$UNIT_RERANKER"
+  "$UNIT_EMBEDDING"
+)
+
+unit_for_port() {
+  case "$1" in
+    8080) printf '%s\n' "$UNIT_GENERATION" ;;
+    8081) printf '%s\n' "$UNIT_RERANKER" ;;
+    8082) printf '%s\n' "$UNIT_EMBEDDING" ;;
+    *)
+      echo "llm: porta desconhecida: $1" >&2
+      return 1
+      ;;
+  esac
+}
+
+probe_port() {
+  local port="$1"
+  curl -sf --max-time 2 "http://127.0.0.1:${port}${READY_URL_PATH}" >/dev/null 2>&1
+}
+
+unit_state() {
+  systemctl is-active "$1" 2>/dev/null || true
+}
+
+report_start_limit_failure() {
+  local unit="$1"
+  echo "llm: start falhou — start-limit atingido em ${unit}." >&2
+  echo "Rode manualmente: sudo systemctl reset-failed ${unit} && sudo systemctl start ${unit}" >&2
+  echo "Verifique: journalctl -u ${unit} -n 30 --no-pager" >&2
+}
+
+start_unit_if_needed() {
+  local unit="$1"
+  local state
+  state="$(unit_state "$unit")"
+
+  if [[ "$state" == "active" ]]; then
+    echo "llm: ${unit} already active — skip start" >&2
+    return 0
+  fi
+
+  if [[ "$state" == "failed" ]]; then
+    echo "llm: ${unit} em failed — reset-failed" >&2
+    if ! sudo systemctl reset-failed "$unit"; then
+      echo "llm: reset-failed falhou para ${unit} (exit=$?)" >&2
+      return 1
+    fi
+  fi
+
+  echo "llm: starting ${unit}" >&2
+  if sudo systemctl start "$unit"; then
+    return 0
+  fi
+
+  local start_exit=$?
+  local show
+  show="$(systemctl show -p Result,ExecMainStatus,NRestarts,State,SubState "$unit" 2>/dev/null || true)"
+  local journal_tail
+  journal_tail="$(journalctl -u "$unit" -n 30 --no-pager 2>/dev/null || true)"
+
+  if grep -qiE 'start-limit|StartLimitBurst|start-limit-hit' <<<"$journal_tail" \
+    || grep -q 'NRestarts=[1-9]' <<<"$show"; then
+    report_start_limit_failure "$unit"
+  else
+    echo "llm: systemctl start falhou para ${unit} (exit=${start_exit})" >&2
+    echo "llm: ${show}" >&2
+    echo "Verifique: journalctl -u ${unit} -n 30 --no-pager" >&2
+  fi
+  return "$start_exit"
+}
+
+start_inactive() {
+  local -a ports=("$@")
+  local -A started_units=()
+
+  for port in "${ports[@]}"; do
+    local unit
+    unit="$(unit_for_port "$port")"
+    if [[ -n "${started_units[$unit]:-}" ]]; then
+      continue
+    fi
+    started_units["$unit"]=1
+    start_unit_if_needed "$unit"
+  done
+}
+
+wait_ready() {
+  local -a ports=("$@")
+  local -A ready_map=()
+  local deadline=$((SECONDS + READY_TIMEOUT_SEC))
+
+  echo "llm: waiting for readiness on port(s): ${ports[*]}" >&2
+
+  while (( SECONDS < deadline )); do
+    local -a pending=()
+    for port in "${ports[@]}"; do
+      [[ -n "${ready_map[$port]:-}" ]] || pending+=("$port")
+    done
+
+    if (( ${#pending[@]} == 0 )); then
+      echo "llm: all required endpoints ready" >&2
+      return 0
+    fi
+
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+
+    local -a pids=()
+    for port in "${pending[@]}"; do
+      (
+        if probe_port "$port"; then
+          touch "${tmpdir}/ready-${port}"
+        fi
+      ) &
+      pids+=("$!")
+    done
+
+    local pid
+    for pid in "${pids[@]}"; do
+      wait "$pid" || true
+    done
+
+    for port in "${pending[@]}"; do
+      if [[ -f "${tmpdir}/ready-${port}" ]]; then
+        ready_map["$port"]=1
+        echo "llm: :${port} ready" >&2
+      fi
+    done
+
+    rm -rf "$tmpdir"
+
+    local -a still_pending=()
+    for port in "${ports[@]}"; do
+      [[ -n "${ready_map[$port]:-}" ]] || still_pending+=("$port")
+    done
+
+    if (( ${#still_pending[@]} == 0 )); then
+      echo "llm: all required endpoints ready" >&2
+      return 0
+    fi
+
+    sleep "$READY_POLL_INTERVAL"
+  done
+
+  local -a not_ready=()
+  for port in "${ports[@]}"; do
+    [[ -n "${ready_map[$port]:-}" ]] || not_ready+=("$port")
+  done
+
+  echo "llm: timeout (${READY_TIMEOUT_SEC}s) — endpoints not ready: ${not_ready[*]}" >&2
+  for port in "${not_ready[@]}"; do
+    local unit
+    unit="$(unit_for_port "$port")"
+    echo "llm:   :${port} unit=${unit} state=$(unit_state "$unit")" >&2
+  done
+  return 1
+}
+
+ensure_llms() {
+  local -a ports=("$@")
+  if (( ${#ports[@]} == 0 )); then
+    return 0
+  fi
+
+  local need_start=0
+  for port in "${ports[@]}"; do
+    local unit
+    unit="$(unit_for_port "$port")"
+    local state
+    state="$(unit_state "$unit")"
+    if [[ "$state" != "active" ]] || ! probe_port "$port"; then
+      need_start=1
+      break
+    fi
+  done
+
+  if (( need_start == 0 )); then
+    echo "llm: already up — skip start" >&2
+    return 0
+  fi
+
+  start_inactive "${ports[@]}"
+  wait_ready "${ports[@]}"
+}
+
+llm_status() {
+  local all_ok=1
+  local port unit state
+
+  for port in 8080 8081 8082; do
+    unit="$(unit_for_port "$port")"
+    state="$(unit_state "$unit")"
+    if [[ "$state" == "active" ]] && probe_port "$port"; then
+      printf 'llm status: %s (%s) active, :%s /v1/models OK\n' "$unit" "$state" "$port"
+    else
+      printf 'llm status: %s (%s) NOT READY, :%s /v1/models FAIL\n' "$unit" "$state" "$port" >&2
+      all_ok=0
+    fi
+  done
+
+  if (( all_ok == 1 )); then
+    return 0
+  fi
+  return 1
+}
+
+llm_stop() {
+  local unit
+  for unit in "${ALL_UNITS[@]}"; do
+    echo "llm: stopping ${unit}" >&2
+    if ! sudo systemctl stop "$unit"; then
+      echo "llm: systemctl stop falhou para ${unit} (exit=$?)" >&2
+      return 1
+    fi
+  done
+
+  for unit in "${ALL_UNITS[@]}"; do
+    local state
+    state="$(unit_state "$unit")"
+    if [[ "$state" == "active" || "$state" == "activating" ]]; then
+      echo "llm: ${unit} ainda ativo após stop (state=${state})" >&2
+      return 1
+    fi
+  done
+
+  if ps aux | grep '[l]lama-server' >/dev/null 2>&1; then
+    echo "llm: processos llama-server ainda presentes após stop:" >&2
+    ps aux | grep '[l]lama-server' >&2 || true
+    return 1
+  fi
+
+  echo "llm: all llama-server units stopped" >&2
+  return 0
+}
+
+resolve_required_ports() {
+  if (( $# == 0 )); then
+    printf '%s\n' "8080 8081 8082"
+    return 0
+  fi
+
+  if [[ "$1" == "-"* ]]; then
+    printf '%s\n' "8080 8081 8082"
+    return 0
+  fi
+
+  case "$1" in
+    llm)
+      case "${2:-}" in
+        status)
+          printf '%s\n' "8080 8081 8082"
+          ;;
+        stop)
+          printf '\n'
+          ;;
+        *)
+          echo "llm: subcomando llm desconhecido: ${2:-}" >&2
+          return 1
+          ;;
+      esac
+      ;;
+    rag)
+      case "${2:-}" in
+        sync)
+          printf '%s\n' "8082"
+          ;;
+        search)
+          printf '%s\n' "8081 8082"
+          ;;
+        *)
+          printf '\n'
+          ;;
+      esac
+      ;;
+    agent)
+      printf '%s\n' "8080 8081 8082"
+      ;;
+    *)
+      printf '\n'
+      ;;
+  esac
+}
+
+run_nanobot() {
+  if (( $# == 0 )) || [[ "$1" == "-"* ]]; then
+    exec sudo -u nanobot-svc "$NANOBOT_BIN" agent "$@"
+  fi
+  exec sudo -u nanobot-svc "$NANOBOT_BIN" "$@"
+}
+
+main() {
+  if (( $# >= 1 )) && [[ "$1" == "llm" ]]; then
+    case "${2:-}" in
+      stop)
+        llm_stop
+        exit $?
+        ;;
+      status)
+        llm_status
+        exit $?
+        ;;
+      "")
+        echo "llm: uso: nanobot-local llm {status|stop}" >&2
+        exit 1
+        ;;
+      *)
+        echo "llm: subcomando llm desconhecido: $2" >&2
+        exit 1
+        ;;
+    esac
+  fi
+
+  local ports_line
+  ports_line="$(resolve_required_ports "$@")"
+  local -a ports=()
+  if [[ -n "${ports_line// }" ]]; then
+    read -r -a ports <<<"$ports_line"
+    ensure_llms "${ports[@]}"
+  fi
+
+  run_nanobot "$@"
+}
+
+main "$@"

@@ -178,7 +178,7 @@ superfície de rede é hipótese a confirmar contra o código-fonte real.
 | Langfuse (observability) | Sim, se configurado | Opcional, exige chave própria                                               | Confirmar ausência de bloco `langfuse` no config                      |
 | Deploy cloud             | Sim, se usado       | Só relevante se seguir botão de deploy do README upstream                   | Não usar — projeto é local-only                                       |
 | Atualização de versão    | Manual              | Manual via `git pull` + `pip install -e .` (não há comando `nanobot update` no CLI) | Rodar manualmente, revisar changelog/commits antes                    |
-| RAG vault (`studyRag.notesDir`) | Não (leitura local) | Lê paths arbitrários do config; módulo `nanobot/rag/` **não** consulta `tools.restrict_to_workspace` | Barreira real: ACL POSIX no host + path explícito no config; sem guard em app no RAG |
+| RAG vault (`studyRag.notesDir`) | Não (leitura local) | Lê paths arbitrários do config; módulo `nanobot/rag/` **não** consulta `tools.restrict_to_workspace` | Escopo atual (desde 2026-08-27): vault Obsidian completo em `/home/cleiton/Puc-minas_anotacoes/Puc/`; barreira real: ACL POSIX no host (`r-x` + default recursivo em `Puc/`, `00-Inbox/`, `Anexos/`, `Modelos/`) + path explícito no config; sem guard em app no RAG |
 
 ---
 
@@ -286,20 +286,22 @@ Aprendizados locais: `.cursor/rules/nanobot-learnings.mdc`.
     exec/filesystem — não o pipeline de sync/search do RAG. A única
     barreira contra `study_rag.notes_dir` escapar do escopo pretendido
     é ACL POSIX aplicada manualmente no host sobre o path configurado.
-    Isso é aceitável enquanto `notes_dir` for um subpath estreito e
-    auditado (ex: `Puc/2026-2`), mas não escala sozinho: se
-    `notes_dir` for ampliado (ex: para a raiz do vault) sem
-    reaplicar/reconferir a ACL no novo escopo, ou se o path contiver
-    um symlink que escape da árvore autorizada, não há segunda camada
-    de defesa em nível de aplicação. Qualquer mudança de `notes_dir`
-    deve reconfirmar a ACL do novo path antes do próximo sync — não
-    assumir herança do escopo anterior.
+    Escopo operacional atual (desde 2026-08-27): vault Obsidian completo
+    em `/home/cleiton/Puc-minas_anotacoes/Puc/` (não mais o subpath
+    `Puc/2026-2`). ACL aplicada com `user:nanobot-svc:r-x` + default
+    recursivo (`d:u:nanobot-svc:r-x`) em `Puc/`, `00-Inbox/`, `Anexos/` e
+    `Modelos/`; arquivos `.md` existentes na raiz do vault recebem
+    `r--` explícito. Não escala sozinho: se `notes_dir` for ampliado
+    novamente, ou se o path contiver um symlink que escape da árvore
+    autorizada, não há segunda camada de defesa em nível de aplicação.
+    Qualquer mudança de `notes_dir` deve reconfirmar a ACL do novo path
+    antes do próximo sync — não assumir herança do escopo anterior.
 
 ---
 
 ## 10. Definição de pronto (DoD) — checklist operacional
 
-Status: **100% VERIFICADA em 2026-08-24** (ver detalhes e evidências no histórico da [Seção 12](#12-notas-operacionais)).
+Status: **100% VERIFICADA** — datas e evidências por marco operacional na [Seção 12](#12-notas-operacionais) (baseline 2026-08-24; extensões RAG produção, systemd e vault completo em 2026-08-27).
 
 - [x] `llama-server` local no ar e testado: `curl -s 127.0.0.1:8080/v1/models`
       confirmado com output real: `{"object":"list","data":[{"id":"Qwen3.5-9B-Q5_K_M.gguf",...}]}`,
@@ -377,9 +379,24 @@ Status: **100% VERIFICADA em 2026-08-24** (ver detalhes e evidências no histór
   - Os 3 processos `llama-server` (8080 geração, 8081 reranker, 8082 embedding) migraram de orquestração manual `nohup+disown` para units systemd em [`deploy/systemd/`](./deploy/systemd/): `User=nanobot-svc`, `Restart=on-failure`, `RestartSec=10`, bind `127.0.0.1`. Binário de runtime: `/usr/local/bin/llama-server` (cópia manual pós-build — ver README em `deploy/systemd/`). **`systemctl enable` não aplicado** — start manual; boot automático continua decisão futura separada.
   - **SELinux (achado permanente)**: systemd inicia serviços sob domínio `init_t`. SELinux nega `execute` de binário com contexto `user_home_t` nesse domínio — mesmo com permissões POSIX `755` OK e mesmo funcionando via `sudo -u` interativo (que herda `unconfined_t` do shell). Diagnóstico: `sudo ausearch -m avc -ts recent`. Fix aplicado: binário em `/usr/local/bin` (`bin_t` nativo), não executar direto do `$HOME` via systemd. **Não** usar `semanage`/`restorecon` como regra geral para binários dentro de home; preferir path fora do home para qualquer executável iniciado por unit systemd.
   - **Gotcha systemd**: `StartLimitIntervalSec` e `StartLimitBurst` pertencem à seção `[Unit]`, não `[Service]`. Em `[Service]` o parser não falha — só emite warning `Unknown key ... ignoring` no journal e ignora silenciosamente o rate-limit de restart.
+- **Lifecycle LLM on-demand via `nanobot-local` (2026-08-28)**:
+  - Wrapper versionado em [`deploy/bin/nanobot-local`](./deploy/bin/nanobot-local) substitui start manual como caminho padrão: start seletivo por subcomando (`rag sync` → 8082; `rag search` → 8081+8082; `agent`/legado → 3), polling concorrente `GET /v1/models` (timeout 120 s conjunto), `llm status` / `llm stop` manuais.
+  - **Sem idle-timeout** — desligar só via `nanobot-local llm stop` ou `systemctl stop` manual. **`systemctl enable` continua fora de escopo.**
+  - Units systemd inalterados (`Restart=on-failure`, `RestartSec=10`, bind `127.0.0.1`).
 - Histórico de automação e subagentes Antigravity em 2026-08-26:
   - **Aninhamento de subagentes customizados**: subagentes customizados (`.md`, `mainAgent: true`) **NÃO** devem invocar outro subagente via `invoke_subagent` no seu system prompt. O aninhamento de 2 níveis perde silenciosamente o retorno da tool call no runtime. Padrão operacional obrigatório: orquestração externa sequencial pela sessão principal (`sessão -> plan`, depois `sessão -> plan-critic`), conforme documentado em [`.agent/gotchas.md`](./.agent/gotchas.md).
   - **Débito técnico em transclusões Obsidian (`_IMAGE_EMBED_RE`)**: `_IMAGE_EMBED_RE` em `markdown.py` remove qualquer transclusão Obsidian `![[...]]` como se fosse imagem, incluindo transclusões de notas markdown (ex: `![[Resumo Cálculo]]`), que são silenciosamente descartadas do texto indexado pelo RAG em vez de expandidas/preservadas. Achado via `systematic-debugging-agent` em 2026-08-26. Se o vault usar transclusão de notas com frequência, isso é perda de conteúdo relevante — avaliar se vale restringir a regex a extensões de mídia (`\.(png|jpe?g|gif|webp|svg|bmp|pdf)`) antes de expandir Fase B.
+- **Promoção RAG para produção (2026-08-27)**:
+  - Commits `fac4006d` (feat: expõe `nanobot rag sync`/`search` via CLI) e `6cc9760e` (fix: `init_db` antes do primeiro sync) promovidos para o pacote instalado sob `nanobot-svc` (wheel `nanobot_ai-0.3.0`, não editable).
+  - Smoke test real sob `nanobot-svc` (Regra 7): `nanobot rag sync` com subpath inicial `Puc/2026-2` — 4 escaneados / 4 sincronizados / 0 falhas; `nanobot rag search "vim comandos"` retornou hit em `AEDS-I/Vim comandos.md` com `relevance_score` **0.992**.
+  - Regra 16 formalizada neste documento (RAG não consulta `restrict_to_workspace`; ACL POSIX é a barreira real).
+  - Commit de governança `192eba28` (`docs: crystallize RAG restrict_to_workspace gap and sudo cwd gotchas`).
+- **Expansão `studyRag.notesDir` para vault completo (2026-08-27)**:
+  - `notesDir` ampliado de `/home/cleiton/Puc-minas_anotacoes/Puc/2026-2` para `/home/cleiton/Puc-minas_anotacoes/Puc/` em config de produção sob `nanobot-svc`.
+  - ACL POSIX reaplicada no novo escopo: `r-x` + default recursivo em `Puc/`, `00-Inbox/`, `Anexos/`, `Modelos/`; `r--` nos `.md` da raiz (`Bem-vindo.md`, `crie um link.md`).
+  - Primeiro sync pós-expansão: re-key de paths confirmado (`AEDS-I/...` → `2026-2/AEDS-I/...`); **6 documentos** indexados; **5/6 chunks** no banco (`crie um link.md` vazio → 0 chunks, comportamento esperado).
+  - Sync incremental subsequente: 6 inalterados / 0 chunks novos (métrica do CLI conta só chunks desta execução, não total no banco).
+  - Buscas de verificação OK: regressão (`"vim comandos"` → `2026-2/AEDS-I/Vim comandos.md`) e conteúdo novo fora do subpath antigo (`"cofre obsidian bem-vindo"` → `Bem-vindo.md`).
 - Migração Cursor em 2026-08-27:
   - Skills ativas de alta prioridade: `dependency-audit`, `local-llm-serving`, `verification-before-completion-nanobot-addendum`, `consolidate-learning`.
   - `threat-modeling` e `top-web-vulnerabilities` ficam pendentes até necessidade real.

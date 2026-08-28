@@ -17,7 +17,31 @@ sudo cp deploy/systemd/llama-server-*.service /etc/systemd/system/
 sudo systemctl daemon-reload
 ```
 
-## Start / stop (no boot auto-start in current phase)
+## Start / stop
+
+### On-demand via `nanobot-local` (desde 2026-08-28)
+
+O wrapper [`deploy/bin/nanobot-local`](../bin/nanobot-local) (instalado em `/usr/local/bin/nanobot-local`) inicia os units **sob demanda** antes de comandos que precisam de inferência. **Sem idle-timeout** — uma vez ligados, ficam ativos até stop manual.
+
+| Comando | Units iniciados (se down) |
+|---------|---------------------------|
+| `nanobot-local rag sync` | embedding (8082) only |
+| `nanobot-local rag search` | reranker (8081) + embedding (8082) |
+| `nanobot-local agent` / legado (`-m`) | os 3 (8080/8081/8082) |
+| `nanobot-local llm status` | nenhum (só verifica) |
+| `nanobot-local llm stop` | para os 3 |
+
+Readiness: `GET http://127.0.0.1:{port}/v1/models` (200) — polling concorrente, timeout 120 s no conjunto. Se unit em `failed`, o wrapper tenta `reset-failed` antes do start; em start-limit, reporta `journalctl -u <unit> -n 30`.
+
+Instalação do wrapper:
+
+```bash
+sudo cp deploy/bin/nanobot-local /usr/local/bin/nanobot-local
+sudo chmod 755 /usr/local/bin/nanobot-local
+cmp deploy/bin/nanobot-local /usr/local/bin/nanobot-local
+```
+
+### Manual (operador com sudo)
 
 ```bash
 sudo systemctl start llama-server-embedding.service
@@ -25,6 +49,7 @@ sudo systemctl start llama-server-reranker.service
 sudo systemctl start llama-server-generation.service
 
 sudo systemctl stop llama-server-{embedding,reranker,generation}.service
+# ou: nanobot-local llm stop
 ```
 
 **Do not run `systemctl enable`** unless boot auto-start is explicitly decided later. Units ship with `[Install] WantedBy=multi-user.target` for future use only.
