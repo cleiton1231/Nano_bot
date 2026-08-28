@@ -281,6 +281,51 @@ class TestSyncPipeline(unittest.TestCase):
             for chunk in loaded.chunks:
                 self.assertNotIn("MARKER_DIR_ESCAPE_456", chunk.content)
 
+    def test_sync_removes_previously_indexed_escaping_symlink(self) -> None:
+        """Pós-fix: path de escape já indexado some do store no próximo sync."""
+        from datetime import datetime, timezone
+
+        from nanobot.rag.markdown import Chunk, ParsedNote
+
+        # Estado legado (pré-fix): documento já no store sob o path do symlink
+        legacy_note = ParsedNote(
+            path="symlink_escape.md",
+            folder="",
+            title="Segredo Externo",
+            updated_at=datetime.now(timezone.utc).isoformat(),
+            checksum="a" * 64,
+            frontmatter={},
+            raw_content="MARKER_OUTSIDE_DATA_123",
+            clean_content="MARKER_OUTSIDE_DATA_123",
+        )
+        legacy_chunk = Chunk(
+            doc_path="symlink_escape.md",
+            chunk_index=0,
+            heading=None,
+            content="MARKER_OUTSIDE_DATA_123",
+            token_count=10,
+        )
+        self.store.save_document(legacy_note, [(legacy_chunk, [0.1, 0.2, 0.3, 0.4])])
+        self.assertIsNotNone(self.store.get_document_by_path("symlink_escape.md"))
+
+        # Em disco: symlink escapando ainda existe (guard rejeita → path some do map)
+        secret_outside = Path(self.temp_dir) / "secret_outside.md"
+        secret_outside.write_text("# Segredo Externo\nMARKER_OUTSIDE_DATA_123", encoding="utf-8")
+        (self.vault_dir / "symlink_escape.md").symlink_to(secret_outside)
+
+        pipeline = self.SyncPipeline(store=self.store, client=self.mock_client, parser=self.parser)
+        stats = pipeline.sync_notes(self.vault_dir)
+
+        self.assertTrue(stats.is_success)
+        self.assertEqual(stats.failed_docs, 0)
+        self.assertEqual(stats.deleted_docs, 1)
+        self.assertIsNone(self.store.get_document_by_path("symlink_escape.md"))
+        for doc in self.store.list_documents():
+            loaded = self.store.get_document_by_path(doc.path)
+            assert loaded is not None and loaded.chunks is not None
+            for chunk in loaded.chunks:
+                self.assertNotIn("MARKER_OUTSIDE_DATA_123", chunk.content)
+
 
 if __name__ == "__main__":
     unittest.main()
