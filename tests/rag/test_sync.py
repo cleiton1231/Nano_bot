@@ -212,6 +212,29 @@ class TestSyncPipeline(unittest.TestCase):
             pipeline.sync_notes(non_existent)
         self.assertEqual(self.store.get_stats().document_count, 1)
 
+    def test_sync_symlink_escape_is_rejected(self) -> None:
+        """Regressão SEC-RAG-01: symlink para fora de notes_dir não é indexado."""
+        secret_outside = Path(self.temp_dir) / "secret_outside.md"
+        secret_outside.write_text("# Segredo Externo\nMARKER_OUTSIDE_DATA_123", encoding="utf-8")
+        symlink_in_vault = self.vault_dir / "symlink_escape.md"
+        symlink_in_vault.symlink_to(secret_outside)
+
+        pipeline = self.SyncPipeline(store=self.store, client=self.mock_client, parser=self.parser)
+        stats = pipeline.sync_notes(self.vault_dir)
+
+        self.assertTrue(stats.is_success)
+        self.assertEqual(stats.failed_docs, 0)
+        self.assertEqual(stats.failed_paths, [])
+        self.assertEqual(stats.scanned_files, 0)
+        self.assertEqual(stats.synced_docs, 0)
+        self.assertIsNone(self.store.get_document_by_path("symlink_escape.md"))
+        for doc in self.store.list_documents():
+            loaded = self.store.get_document_by_path(doc.path)
+            assert loaded is not None and loaded.chunks is not None
+            for chunk in loaded.chunks:
+                self.assertNotIn("MARKER_OUTSIDE_DATA_123", chunk.content)
+
 
 if __name__ == "__main__":
     unittest.main()
+

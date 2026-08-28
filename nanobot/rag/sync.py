@@ -77,6 +77,15 @@ class SyncPipeline:
                 logger.debug("Skipping Syncthing conflict file: %s", p)
                 continue
 
+            resolved = p.resolve()
+            if not resolved.is_relative_to(notes_path):
+                logger.warning(
+                    "Skipping path escaping notes_dir (symlink or traversal): %s -> %s",
+                    p,
+                    resolved,
+                )
+                continue
+
             rel_posix = p.relative_to(notes_path).as_posix()
             disk_files.append(p)
             disk_rel_map[rel_posix] = p
