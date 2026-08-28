@@ -251,6 +251,36 @@ class TestSyncPipeline(unittest.TestCase):
         self.assertIsNotNone(alias_doc)
         self.assertIn("MARKER_INTERNAL_OK", alias_doc.chunks[0].content)
 
+    def test_sync_directory_symlink_escape_is_rejected(self) -> None:
+        """Dir-symlink sob o vault apontando para fora não deve indexar .md do destino."""
+        outside_dir = Path(self.temp_dir) / "outside_dir"
+        outside_dir.mkdir()
+        (outside_dir / "nota_externa.md").write_text(
+            "# Externa\nMARKER_DIR_ESCAPE_456",
+            encoding="utf-8",
+        )
+        link_dir = self.vault_dir / "link_dir"
+        link_dir.symlink_to(outside_dir)
+
+        # Controle: nota legítima no vault deve continuar sincronizando
+        (self.vault_dir / "legit.md").write_text("# Legit\nOK", encoding="utf-8")
+
+        pipeline = self.SyncPipeline(store=self.store, client=self.mock_client, parser=self.parser)
+        stats = pipeline.sync_notes(self.vault_dir)
+
+        self.assertTrue(stats.is_success)
+        self.assertEqual(stats.failed_docs, 0)
+        # Apenas legit.md conta como scanned — nada sob link_dir/
+        self.assertEqual(stats.scanned_files, 1)
+        self.assertEqual(stats.synced_docs, 1)
+        self.assertIsNotNone(self.store.get_document_by_path("legit.md"))
+        self.assertIsNone(self.store.get_document_by_path("link_dir/nota_externa.md"))
+        for doc in self.store.list_documents():
+            loaded = self.store.get_document_by_path(doc.path)
+            assert loaded is not None and loaded.chunks is not None
+            for chunk in loaded.chunks:
+                self.assertNotIn("MARKER_DIR_ESCAPE_456", chunk.content)
+
 
 if __name__ == "__main__":
     unittest.main()
