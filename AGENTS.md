@@ -178,7 +178,7 @@ superfície de rede é hipótese a confirmar contra o código-fonte real.
 | Langfuse (observability) | Sim, se configurado | Opcional, exige chave própria                                               | Confirmar ausência de bloco `langfuse` no config                      |
 | Deploy cloud             | Sim, se usado       | Só relevante se seguir botão de deploy do README upstream                   | Não usar — projeto é local-only                                       |
 | Atualização de versão    | Manual              | Manual via `git pull` + `pip install -e .` (não há comando `nanobot update` no CLI) | Rodar manualmente, revisar changelog/commits antes                    |
-| RAG vault (`studyRag.notesDir`) | Não (leitura local) | Lê paths arbitrários do config; módulo `nanobot/rag/` **não** consulta `tools.restrict_to_workspace` | Escopo atual (desde 2026-08-27): vault Obsidian completo em `/home/cleiton/Puc-minas_anotacoes/Puc/`; barreira real: ACL POSIX no host (`r-x` + default recursivo em `Puc/`, `00-Inbox/`, `Anexos/`, `Modelos/`) + path explícito no config; sem guard em app no RAG |
+| RAG vault (`studyRag.notesDir`) | Não (leitura local) | Lê paths arbitrários do config; módulo `nanobot/rag/` **não** consulta `tools.restrict_to_workspace` | Escopo atual (desde 2026-08-27): vault Obsidian completo em `/home/cleiton/Puc-minas_anotacoes/Puc/`; barreira em aplicação: `sync_notes()` rejeita paths cujo `resolve()` sai de `notes_dir` (symlinks/traversal), skip+warning; defesa em profundidade: ACL POSIX no host (`r-x` + default recursivo em `Puc/`, `00-Inbox/`, `Anexos/`, `Modelos/`) + path explícito no config |
 
 ---
 
@@ -283,19 +283,22 @@ Aprendizados locais: `.cursor/rules/nanobot-learnings.mdc`.
     e o conteúdo literal do trecho.
 16. O subsistema RAG (`nanobot/rag/`) não consulta
     `tools.restrict_to_workspace`. Esse guard protege apenas tools de
-    exec/filesystem — não o pipeline de sync/search do RAG. A única
-    barreira contra `study_rag.notes_dir` escapar do escopo pretendido
-    é ACL POSIX aplicada manualmente no host sobre o path configurado.
-    Escopo operacional atual (desde 2026-08-27): vault Obsidian completo
-    em `/home/cleiton/Puc-minas_anotacoes/Puc/` (não mais o subpath
+    exec/filesystem — não o pipeline de sync/search do RAG. Contra
+    `study_rag.notes_dir` escapar do escopo pretendido há duas camadas:
+    (1) **barreira em aplicação** — `sync_notes()` rejeita paths cujo
+    `resolve()` sai de `notes_dir.resolve()` (symlinks de arquivo ou
+    diretório, traversal), com skip+`logger.warning` e sem indexação;
+    (2) **ACL POSIX** no host, aplicada manualmente sobre o path
+    configurado, como defesa em profundidade e confinamento de leitura
+    do processo `nanobot-svc`. Escopo operacional atual (desde
+    2026-08-27): vault Obsidian completo em
+    `/home/cleiton/Puc-minas_anotacoes/Puc/` (não mais o subpath
     `Puc/2026-2`). ACL aplicada com `user:nanobot-svc:r-x` + default
     recursivo (`d:u:nanobot-svc:r-x`) em `Puc/`, `00-Inbox/`, `Anexos/` e
     `Modelos/`; arquivos `.md` existentes na raiz do vault recebem
-    `r--` explícito. Não escala sozinho: se `notes_dir` for ampliado
-    novamente, ou se o path contiver um symlink que escape da árvore
-    autorizada, não há segunda camada de defesa em nível de aplicação.
-    Qualquer mudança de `notes_dir` deve reconfirmar a ACL do novo path
-    antes do próximo sync — não assumir herança do escopo anterior.
+    `r--` explícito. Qualquer mudança de `notes_dir` deve reconfirmar a
+    ACL do novo path antes do próximo sync — não assumir herança do
+    escopo anterior.
 
 ---
 
