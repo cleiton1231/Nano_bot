@@ -14,101 +14,154 @@
 
 # nanobot pessoal
 
-Assistente pessoal local, rodando 100% na própria máquina via `llama.cpp`. Baseado no framework open-source [HKUDS/nanobot](https://github.com/HKUDS/nanobot), adaptado para dois usos concretos:
+Assistente pessoal **local-only**, rodando na própria máquina via `llama.cpp`. Fork do framework open-source [HKUDS/nanobot](https://github.com/HKUDS/nanobot), adaptado para dois usos:
 
-1. 📚 **RAG sobre notas e documentos de estudo** — indexar arquivos `.md` de um workspace dedicado, recuperar trechos relevantes via embedding + reranker, e responder perguntas com contexto real das notas.
-2. 📝 **Utilitário leve de texto do dia a dia** — tarefas pontuais de texto e apoio pessoal, sem virar hub de automação.
+1. **RAG sobre notas de estudo (PUC Minas)** — indexar `.md` de um vault Obsidian, recuperar trechos via embedding + reranker e responder com contexto real das notas.
+2. **Utilitário leve de texto** — tarefas pontuais do dia a dia, sem virar hub de automação.
 
-> **Privacidade e Isolamento**: Projeto 100% local por design. Sem serviços em nuvem, sem canais de chat externos e com execução isolada sob usuário Linux dedicado. A governança completa do projeto está documentada em [GEMINI.md](./GEMINI.md).
+Fora de escopo por design: canais de chat externos (Telegram, Discord, WhatsApp), MCP remoto por padrão, deploy em nuvem e WebUI exposta na LAN. Cada superfície de rede extra é opt-in consciente, não default.
+
+Governança técnica e regras operacionais: **[AGENTS.md](./AGENTS.md)** (fonte de verdade deste repo).
 
 ---
 
-## Arquitetura e Isolamento
+## Arquitetura
 
 ```
-Terminal (CLI)
-  └─► /usr/local/bin/nanobot-local (sudo -u nanobot-svc)
-        ├─► nanobot (Python venv em /home/nanobot-svc/.venv)
-        │     ├─► Execução com sandbox configurável (bwrap via tools.exec.sandbox)
-        │     └─► Workspace restrito (restrict_to_workspace: true)
-        ├─► llama-server (Qwen3.5-9B Q5_K_M em 127.0.0.1:8080/v1)
-        └─► llama-server --rerank (Qwen3-Reranker-0.6B em 127.0.0.1:8081)
+Terminal
+  └─► nanobot-local  (wrapper → sudo -u nanobot-svc)
+        ├─► systemd: llama-server-generation   → 127.0.0.1:8080  (Qwen3.5-9B)
+        ├─► systemd: llama-server-reranker     → 127.0.0.1:8081  (Qwen3-Reranker-0.6B)
+        ├─► systemd: llama-server-embedding    → 127.0.0.1:8082  (Qwen3-Embedding-0.6B)
+        └─► nanobot CLI (venv em /home/nanobot-svc/.venv)
+              ├─► agent + tools (sandbox bwrap quando configurado)
+              └─► rag sync / rag search
 ```
 
-- **Isolamento de Processo**: Executado sob o usuário de serviço dedicado `nanobot-svc` (UID 960) com suporte a sandbox nativa via `bubblewrap` (`bwrap`), sem Docker e sem daemon persistente (sem systemd/gateway, sem cron de background ou heartbeat). Invocado sob demanda via wrapper `/usr/local/bin/nanobot-local`.
-- **Interface 100% CLI**: WebUI não instalada (`NANOBOT_SKIP_WEBUI_BUILD=1`), eliminando portas de interface gráfica e serviços de rede expostos na máquina.
-- **Configuração Segura**: Arquivo de configuração em `/home/nanobot-svc/.nanobot/config.json` com permissões `chmod 600`, sem chaves em texto puro.
+- **Usuário dedicado**: processos sob `nanobot-svc`, nunca como usuário interativo nem root.
+- **Sem daemon do nanobot**: invocação sob demanda via CLI; os `llama-server` sobem via `nanobot-local` quando o subcomando precisa deles.
+- **Sem Docker**: isolamento nativo com `bubblewrap` (`bwrap`) no host.
+- **Interface CLI**: WebUI não instalada neste setup (`NANOBOT_SKIP_WEBUI_BUILD=1`).
+- **Config**: `~/.nanobot/config.json` do usuário de serviço, `chmod 600`, sem chave em texto puro.
+
+Detalhes de instalação dos units systemd e do wrapper: [`deploy/systemd/README.md`](./deploy/systemd/README.md).
 
 ---
 
-## Modelos e Inferência Local
+## Modelos e inferência local
 
-Inferência servida localmente via `llama-server` (Vulkan/RADV, GPU RX 9060 XT 16GB):
+Inferência via `llama-server` (Vulkan/RADV, GPU RX 9060 XT 16 GB). Soma residente dos três modelos ~7,7 GB + KV cache — cabe confortável com desktop aberto.
 
-| Papel | Modelo | Quantização | Endpoint Local | Nota |
-|---|---|---|---|---|
-| **Geração/Resposta** | Qwen3.5-9B | Q5_K_M (~6,5 GB) | `127.0.0.1:8080/v1` | Contexto `-c 16384` |
-| **Reranker (RAG)** | Qwen3-Reranker-0.6B | Q8_0 (~0,6 GB) | `127.0.0.1:8081` | Servido com `--rerank` |
-| **Embedding (RAG)** | Qwen3-Embedding-0.6B | Q8_0 (~0,6 GB) | Local | Recuperação de trechos |
+| Papel | Modelo | Quant | Endpoint | Nota |
+|-------|--------|-------|----------|------|
+| Geração | Qwen3.5-9B | Q5_K_M (~6,5 GB) | `http://127.0.0.1:8080/v1` | Contexto `-c 16384` |
+| Reranker (RAG) | Qwen3-Reranker-0.6B | Q8_0 (~0,6 GB) | `http://127.0.0.1:8081` | Flag `--rerank` |
+| Embedding (RAG) | Qwen3-Embedding-0.6B | Q8_0 (~0,6 GB) | `http://127.0.0.1:8082/v1` | Recuperação vetorial |
 
----
+**Reranker — usar só conversões validadas.** A maioria das conversões comunitárias do Qwen3-Reranker está quebrada (falta `cls.output.weight`; scores saem lixo). Repositórios aceitos:
 
-## Superfície de Segurança e Rede
+- [`ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF`](https://huggingface.co/ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF)
+- [`Voodisss/Qwen3-Reranker-0.6B-GGUF-llama_cpp`](https://huggingface.co/Voodisss/Qwen3-Reranker-0.6B-GGUF-llama_cpp)
 
-| Componente | Estado no Setup | Mecanismo de Proteção |
-|---|---|---|
-| **Canais de chat externos** | Desativados (`channels: {}`) | 0 adaptadores externos (Telegram/Discord/WhatsApp fora de escopo) |
-| **Web Search & Fetch** | Desativados (`tools.web.enable: false`) | Removidos do registro de ferramentas do agente |
-| **Restrição de Workspace** | Ativa (`restrict_to_workspace: true`) | Bloqueio de leitura, escrita e exec fora da pasta permitida |
-| **Sandbox de Comandos** | Configurável (`tools.exec.sandbox: "bwrap"`) | Isolamento de kernel/namespaces (em ativação/validação) |
-| **WebUI** | Não instalada | Build ignorada via `NANOBOT_SKIP_WEBUI_BUILD=1` |
+Embedding oficial usado na homologação: [`Qwen/Qwen3-Embedding-0.6B-GGUF`](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF).
 
 ---
 
-## Definição de Pronto (DoD)
+## Como rodar
 
-Status: **100% VERIFICADA em 2026-08-24** (com evidências empíricas registradas nas Seções 10 e 12 do [GEMINI.md](./GEMINI.md)):
+### Pré-requisitos operacionais
 
-- [x] `llama-server` local ativo e respondendo (`Qwen3.5-9B Q5_K_M`, `-c 16384`).
-- [x] Reranker testado com separação real de scores (`0.99915` vs `0.00001` no `Qwen3-Reranker-0.6B-Q8_0`).
-- [x] Restrição de workspace (`restrict_to_workspace`) testada e bloqueando acessos externos.
-- [x] `channels: {}` e `tools.web.enable: false` confirmados no processo real sob `nanobot-svc`.
-- [x] Invocação sob demanda via wrapper `nanobot-local` validada sob usuário `nanobot-svc`.
-- [x] `config.json` com `chmod 600` e sem credenciais em texto puro.
-- [x] WebUI não instalada (interface exclusivamente CLI local).
+1. Units systemd copiados e `daemon-reload` (ver [`deploy/systemd/README.md`](./deploy/systemd/README.md)).
+2. Wrapper instalado: `sudo cp deploy/bin/nanobot-local /usr/local/bin/nanobot-local`
+3. Config do `nanobot-svc` com `studyRag.notesDir`, URLs de embedding/reranker e paths do banco vetorial.
 
----
+**Não usar `systemctl enable`** nos units de `llama-server` — boot automático continua decisão separada. Start é on-demand pelo wrapper.
 
-## Como Usar
+### Lifecycle dos modelos (`nanobot-local`)
 
-### 1. Iniciar os Servidores Locais de Modelo
+O wrapper inicia só os serviços necessários, faz polling de readiness em `GET /v1/models` (timeout 120 s) e delega ao `nanobot` como `nanobot-svc`. **Sem idle-timeout** — modelos ficam em VRAM até stop manual.
+
+| Comando | LLMs iniciados (se down) |
+|---------|--------------------------|
+| `nanobot-local rag sync` | embedding (8082) |
+| `nanobot-local rag search` | reranker (8081) + embedding (8082) |
+| `nanobot-local agent -m "..."` | os 3 (8080/8081/8082) |
+| `nanobot-local -m "..."` | os 3 (forma legada → `agent`) |
+| `nanobot-local llm status` | nenhum (só verifica) |
+| `nanobot-local llm stop` | para os 3 |
+
+### Comandos CLI (RAG)
+
+Confirmados em `nanobot/cli/rag.py` e `nanobot --help`:
 
 ```bash
-# Servidor de Geração (porta 8080)
-llama-server -m /caminho/Qwen3.5-9B-Q5_K_M.gguf \
-  --host 127.0.0.1 --port 8080 --ctx-size 16384
+# Sincronizar vault → banco vetorial (incremental por checksum SHA-256)
+nanobot-local rag sync
 
-# Servidor de Rerank (porta 8081)
-llama-server -m /caminho/qwen3-reranker-0.6b-q8_0.gguf \
-  --host 127.0.0.1 --port 8081 --rerank
+# Forçar re-embed de todas as notas
+nanobot-local rag sync --force
+
+# Busca semântica (KNN + reranker)
+nanobot-local rag search "derivadas parciais"
+
+# Filtro por pasta do vault
+nanobot-local rag search "vim comandos" --folder "2026-2/AEDS-I"
 ```
 
-### 2. Invocar o nanobot via CLI
+`rag sync` retorna métricas operacionais (`scanned_files`, `synced_docs`, `failed_docs`, etc.) e exit code não-zero se houver falhas de leitura/embedding. Symlinks que escapam de `notes_dir` são rejeitados em nível de aplicação (skip + warning), sem indexação.
+
+### Agente conversacional
 
 ```bash
-nanobot-local -m "sua pergunta ou instrução"
+nanobot-local agent -m "resuma o que sei sobre limites de cálculo"
+```
+
+O agente pode usar a tool `search_study_notes` quando o RAG está configurado — pipeline de dois estágios (KNN `candidate_k` + reranker `top_k`).
+
+### Desenvolvimento no checkout
+
+No repo de desenvolvimento, invocar via venv (não `~/.local/bin/nanobot`):
+
+```bash
+uv run nanobot --help
+uv run nanobot rag sync
 ```
 
 ---
 
-## Governança e Regras do Projeto
+## RAG — estado atual
 
-Este repositório segue regras estritas de governança, auditoria técnica e verificação empírica antes de qualquer alteração de código ou documentação. Para detalhes sobre o modelo de ameaças, regras não-negociáveis e arquitetura completa, consulte o **[GEMINI.md](./GEMINI.md)**.
+Pipeline **Fase B** fechado: sync incremental, busca vetorial + reranker fail-fast, tool `search_study_notes` com saída Markdown estruturada.
+
+**Vault de notas**: somente leitura (Syncthing). O nanobot não escreve, edita nem deleta `.md` do vault.
+
+**Confinamento do vault**:
+
+1. **Barreira em aplicação** — `sync_notes()` rejeita paths cujo `resolve()` sai de `notes_dir` (symlinks de arquivo/diretório).
+2. **ACL POSIX** no host sobre o path configurado — defesa em profundidade para o processo `nanobot-svc`.
+
+`tools.restrict_to_workspace` protege tools de exec/filesystem do agente, **não** o pipeline RAG.
+
+**Nota Obsidian**: transclusões `![[nome-da-nota]]` sem extensão de mídia são descartadas pelo parser (`_IMAGE_EMBED_RE`) — conteúdo transcluído não entra no índice. Se o vault usa transclusão de notas com frequência, o recall pode ficar incompleto nesses trechos.
+
+---
+
+## Segurança e rede (resumo)
+
+| Superfície | Estado neste setup |
+|------------|-------------------|
+| Inferência LLM | `127.0.0.1` apenas (8080/8081/8082) |
+| WebUI | Não instalada |
+| Web search / fetch | Desativados (`tools.web.enable: false`) |
+| Canais de chat | Nenhum (`channels: {}`) |
+| MCP | Só se configurado explicitamente |
+| Sandbox de exec | `bwrap` quando `tools.exec.sandbox: "bwrap"` |
+| Vault RAG | Leitura local; ACL + guard de symlink no sync |
+
+Projeto **local-only** — sem exposição de porta na LAN; acesso remoto, se necessário, via túnel SSH.
 
 ---
 
 ## Créditos
 
-Este projeto é um fork pessoal do [nanobot](https://github.com/HKUDS/nanobot), criado por [Xubin Ren](https://github.com/re-bin) e mantido pela comunidade open-source sob licença MIT.
-
-A documentação original, guias de instalação e arquitetura completa estão disponíveis em [nanobot.wiki](https://nanobot.wiki).
+Fork pessoal do [nanobot](https://github.com/HKUDS/nanobot) (MIT). Documentação upstream em [nanobot.wiki](https://nanobot.wiki).
